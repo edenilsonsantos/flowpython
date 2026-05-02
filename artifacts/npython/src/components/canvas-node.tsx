@@ -2,7 +2,7 @@ import { memo } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
 import {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
-  Variable, Database, Shuffle, Globe, Timer, StickyNote,
+  Variable, Database, Shuffle, Globe, Timer, StickyNote, Pin,
   LucideProps,
 } from "lucide-react";
 import { getNodeDef, NODE_CATEGORY_META } from "@/lib/node-definitions";
@@ -21,11 +21,12 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
   const hasInput = def?.hasInput ?? true;
   const hasOutput = def?.hasOutput ?? true;
   const isNote = data.type === "note";
+  const isPinned = !!(data.config as Record<string, unknown>)?.pinned;
 
   return (
     <div
       style={{
-        border: `2px solid ${selected ? color : "rgba(255,255,255,0.12)"}`,
+        border: `2px solid ${selected ? color : isPinned ? `${color}88` : "rgba(255,255,255,0.12)"}`,
         borderRadius: 10,
         background: isNote ? "rgba(148,163,184,0.08)" : "hsl(var(--card))",
         minWidth: 160,
@@ -34,8 +35,32 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
           ? `0 0 0 3px ${color}33, 0 4px 16px rgba(0,0,0,0.4)`
           : "0 2px 8px rgba(0,0,0,0.3)",
         transition: "box-shadow 0.15s, border-color 0.15s",
+        position: "relative",
       }}
     >
+      {/* Pin badge */}
+      {isPinned && (
+        <div
+          title="Dados mockados (pinned)"
+          style={{
+            position: "absolute",
+            top: -8,
+            right: -8,
+            width: 18,
+            height: 18,
+            borderRadius: "50%",
+            background: "#f59e0b",
+            border: "2px solid hsl(var(--background))",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 5,
+          }}
+        >
+          <Pin size={9} color="white" strokeWidth={3} />
+        </div>
+      )}
+
       {hasInput && (
         <Handle
           type="target"
@@ -91,7 +116,7 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
             {data.label as string}
           </div>
           <div style={{ fontSize: 10, color: color, fontWeight: 500, marginTop: 1 }}>
-            {def?.category.toUpperCase() ?? "NODE"}
+            {isPinned ? "📌 PINNED" : (def?.category.toUpperCase() ?? "NODE")}
           </div>
         </div>
       </div>

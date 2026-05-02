@@ -30,19 +30,24 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Play, Save, Settings, X, Trash2, AlertTriangle } from "lucide-react";
+import {
+  ArrowLeft, Play, Save, Settings, X, Trash2, AlertTriangle,
+  FlaskConical, Pin, PinOff, CheckCircle2, XCircle, Loader2,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import CodeMirror from "@uiw/react-codemirror";
 import { python } from "@codemirror/lang-python";
 
 import { CanvasNode } from "@/components/canvas-node";
+import { EdgeWithDelete } from "@/components/edge-with-delete";
 import { NodePalette } from "@/components/node-palette";
 import { NodeDef, getNodeDef, isTriggerType } from "@/lib/node-definitions";
 
 const nodeTypes = { custom: CanvasNode };
+const edgeTypes = { custom: EdgeWithDelete };
 
-// ─── Inner editor (needs useReactFlow context) ────────────────────────────────
+// ─── Inner editor ─────────────────────────────────────────────────────────────
 
 function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const [, setLocation] = useLocation();
@@ -60,7 +65,12 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const [nodes, setNodes] = useState<ReactFlowNode[]>([]);
   const [edges, setEdges] = useState<ReactFlowEdge[]>([]);
   const [selectedNode, setSelectedNode] = useState<ReactFlowNode | null>(null);
+  const [testResult, setTestResult] = useState<{ output: string; success: boolean; durationMs: number } | null>(null);
+  const [testLoading, setTestLoading] = useState(false);
   const initRef = useRef(false);
+
+  // Clear test result when selected node changes
+  useEffect(() => { setTestResult(null); }, [selectedNode?.id]);
 
   // Load workflow nodes/edges once
   useEffect(() => {
@@ -77,6 +87,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       setEdges(
         (workflow.edges || []).map((e) => ({
           id: e.id,
+          type: "custom",
           source: e.sourceNodeId,
           target: e.targetNodeId,
           label: e.label ?? undefined,
@@ -87,19 +98,13 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     }
   }, [workflow]);
 
-  const onNodesChange = useCallback(
-    (changes: NodeChange[]) => {
-      setNodes((nds) => applyNodeChanges(changes, nds));
-      setSelectedNode((sel) => {
-        if (!sel) return sel;
-        const removed = changes.some(
-          (c) => c.type === "remove" && c.id === sel.id
-        );
-        return removed ? null : sel;
-      });
-    },
-    []
-  );
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setNodes((nds) => applyNodeChanges(changes, nds));
+    setSelectedNode((sel) => {
+      if (!sel) return sel;
+      return changes.some((c) => c.type === "remove" && c.id === sel.id) ? null : sel;
+    });
+  }, []);
 
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
@@ -110,7 +115,12 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     (params: Connection) =>
       setEdges((eds) =>
         addEdge(
-          { ...params, animated: true, style: { stroke: "hsl(var(--primary))", strokeWidth: 2 } },
+          {
+            ...params,
+            type: "custom",
+            animated: true,
+            style: { stroke: "hsl(var(--primary))", strokeWidth: 2 },
+          },
           eds
         )
       ),
@@ -121,7 +131,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     setSelectedNode(node);
   }, []);
 
-  // ── Drag-and-drop from palette ─────────────────────────────────
+  // ── Drag-and-drop from palette ────────────────────────────────────
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
@@ -133,43 +143,32 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       const raw = e.dataTransfer.getData("application/flowpython-node");
       if (!raw) return;
       const def: NodeDef = JSON.parse(raw);
-
-      const bounds = wrapperRef.current?.getBoundingClientRect();
-      if (!bounds) return;
-      const position = reactFlow.screenToFlowPosition({
-        x: e.clientX,
-        y: e.clientY,
-      });
-
+      const position = reactFlow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
       addNodeFromDef(def, position);
     },
     [reactFlow]
   );
 
-  // ── Add node helpers ───────────────────────────────────────────
-  const addNodeFromDef = useCallback(
-    (def: NodeDef, position?: { x: number; y: number }) => {
-      const pos = position ?? { x: 200 + Math.random() * 200, y: 150 + Math.random() * 150 };
-      const newNode: ReactFlowNode = {
-        id: `node_${Date.now()}`,
-        type: "custom",
-        position: pos,
-        data: {
-          label: def.label,
-          type: def.type,
-          config: { ...def.defaultConfig },
-          retryCount: 0,
-          retryDelayMs: 1000,
-          continueOnError: false,
-          stopOnError: true,
-        },
-      };
-      setNodes((nds) => [...nds, newNode]);
-    },
-    []
-  );
+  const addNodeFromDef = useCallback((def: NodeDef, position?: { x: number; y: number }) => {
+    const pos = position ?? { x: 200 + Math.random() * 200, y: 150 + Math.random() * 150 };
+    const newNode: ReactFlowNode = {
+      id: `node_${Date.now()}`,
+      type: "custom",
+      position: pos,
+      data: {
+        label: def.label,
+        type: def.type,
+        config: { ...def.defaultConfig },
+        retryCount: 0,
+        retryDelayMs: 1000,
+        continueOnError: false,
+        stopOnError: true,
+      },
+    };
+    setNodes((nds) => [...nds, newNode]);
+  }, []);
 
-  // ── Save ───────────────────────────────────────────────────────
+  // ── Save ──────────────────────────────────────────────────────────
   const handleSave = async () => {
     const apiNodes: ApiNode[] = nodes.map((n) => ({
       id: n.id,
@@ -186,7 +185,6 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       createdAt: n.data.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }));
-
     const apiEdges: ApiEdge[] = edges.map((e) => ({
       id: e.id,
       sourceNodeId: e.source,
@@ -194,23 +192,22 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       label: e.label as string,
       condition: null,
     }));
-
     try {
       await updateWorkflow.mutateAsync({ id: workflowId, data: { nodes: apiNodes, edges: apiEdges } });
-      toast({ title: "Workflow salvo com sucesso" });
+      toast({ title: "Workflow salvo" });
       queryClient.invalidateQueries({ queryKey: getGetWorkflowQueryKey(workflowId) });
     } catch {
-      toast({ title: "Falha ao salvar workflow", variant: "destructive" });
+      toast({ title: "Erro ao salvar", variant: "destructive" });
     }
   };
 
-  // ── Execute (validate trigger first) ──────────────────────────
+  // ── Execute (validate trigger first) ─────────────────────────────
   const handleExecute = async () => {
     const hasTrigger = nodes.some((n) => isTriggerType(n.data.type as string));
     if (!hasTrigger) {
       toast({
         title: "Trigger obrigatório",
-        description: "Adicione ao menos um nodo de Trigger antes de executar.",
+        description: "Adicione ao menos um nodo Trigger antes de executar.",
         variant: "destructive",
       });
       return;
@@ -220,11 +217,30 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       toast({ title: "Execução iniciada" });
       setLocation(`/executions/${res.id}`);
     } catch {
-      toast({ title: "Falha ao iniciar execução", variant: "destructive" });
+      toast({ title: "Erro ao executar", variant: "destructive" });
     }
   };
 
-  // ── Config panel helpers ───────────────────────────────────────
+  // ── Test single node ──────────────────────────────────────────────
+  const handleTestNode = async () => {
+    if (!selectedNode) return;
+    setTestLoading(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(
+        `/api/workflows/${workflowId}/nodes/${selectedNode.id}/execute`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }
+      );
+      const data = await res.json();
+      setTestResult({ output: data.output ?? data.error ?? "", success: data.success, durationMs: data.durationMs ?? 0 });
+    } catch (e: any) {
+      setTestResult({ output: e.message, success: false, durationMs: 0 });
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  // ── Config panel helpers ──────────────────────────────────────────
   const updateNodeData = (key: string, value: unknown) => {
     if (!selectedNode) return;
     setNodes((nds) =>
@@ -253,21 +269,14 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const deleteSelectedNode = () => {
     if (!selectedNode) return;
     setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
-    setEdges((eds) =>
-      eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id)
-    );
+    setEdges((eds) => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
     setSelectedNode(null);
   };
 
-  // ── Trigger warning ────────────────────────────────────────────
   const hasTrigger = nodes.some((n) => isTriggerType(n.data.type as string));
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-        Carregando editor...
-      </div>
-    );
+    return <div className="flex items-center justify-center h-full text-muted-foreground text-sm">Carregando editor...</div>;
   }
 
   return (
@@ -275,66 +284,37 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       {/* Node palette */}
       <NodePalette onAddNode={(def) => addNodeFromDef(def)} />
 
-      {/* Canvas */}
+      {/* Canvas area */}
       <div className="flex-1 flex flex-col h-full relative">
-        {/* Header toolbar */}
-        <div
-          style={{
-            height: 52,
-            borderBottom: "1px solid hsl(var(--border))",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0 12px",
-            background: "hsl(var(--card))",
-            flexShrink: 0,
-          }}
-        >
+        {/* Header */}
+        <div style={{
+          height: 52, borderBottom: "1px solid hsl(var(--border))",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "0 12px", background: "hsl(var(--card))", flexShrink: 0,
+        }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Button variant="ghost" size="icon" onClick={() => setLocation("/workflows")}>
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <span style={{ fontWeight: 600, fontSize: 14 }}>{workflow?.name ?? "Workflow"}</span>
-            {workflow?.active ? (
-              <Badge variant="default" className="text-xs">Active</Badge>
-            ) : (
-              <Badge variant="secondary" className="text-xs">Inactive</Badge>
-            )}
+            {workflow?.active
+              ? <Badge variant="default" className="text-xs">Active</Badge>
+              : <Badge variant="secondary" className="text-xs">Inactive</Badge>}
             {!hasTrigger && nodes.length > 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  fontSize: 11,
-                  color: "#fbbf24",
-                  background: "rgba(251,191,36,0.1)",
-                  border: "1px solid rgba(251,191,36,0.3)",
-                  borderRadius: 6,
-                  padding: "3px 8px",
-                }}
-              >
-                <AlertTriangle size={12} />
-                Adicione um Trigger
+              <div style={{
+                display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#fbbf24",
+                background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)",
+                borderRadius: 6, padding: "3px 8px",
+              }}>
+                <AlertTriangle size={12} /> Adicione um Trigger
               </div>
             )}
           </div>
-
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleSave}
-              disabled={updateWorkflow.isPending}
-            >
+            <Button variant="ghost" size="sm" onClick={handleSave} disabled={updateWorkflow.isPending}>
               <Save className="h-4 w-4 mr-1.5" /> Salvar
             </Button>
-            <Button
-              variant="default"
-              size="sm"
-              onClick={handleExecute}
-              disabled={executeWorkflow.isPending}
-            >
+            <Button variant="default" size="sm" onClick={handleExecute} disabled={executeWorkflow.isPending}>
               <Play className="h-4 w-4 mr-1.5" /> Executar
             </Button>
           </div>
@@ -351,28 +331,24 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             onNodeClick={onNodeClick}
             onPaneClick={() => setSelectedNode(null)}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             fitView
             deleteKeyCode="Delete"
             style={{ background: "hsl(var(--background))" }}
           >
             <Background color="rgba(255,255,255,0.04)" gap={20} />
-            <Controls
-              style={{
-                background: "hsl(var(--card))",
-                border: "1px solid hsl(var(--border))",
-                borderRadius: 8,
-              }}
-            />
+            <Controls style={{
+              background: "hsl(var(--card))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: 8,
+            }} />
             <MiniMap
               style={{
                 background: "hsl(var(--card))",
                 border: "1px solid hsl(var(--border))",
                 borderRadius: 8,
               }}
-              nodeColor={(n) => {
-                const def = getNodeDef(n.data?.type);
-                return def?.color ?? "#94a3b8";
-              }}
+              nodeColor={(n) => getNodeDef(n.data?.type)?.color ?? "#94a3b8"}
             />
           </ReactFlow>
         </div>
@@ -380,29 +356,16 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
 
       {/* Config panel */}
       {selectedNode && (
-        <div
-          style={{
-            width: 340,
-            height: "100%",
-            background: "hsl(var(--card))",
-            borderLeft: "1px solid hsl(var(--border))",
-            display: "flex",
-            flexDirection: "column",
-            flexShrink: 0,
-            overflow: "hidden",
-          }}
-        >
+        <div style={{
+          width: 360, height: "100%", background: "hsl(var(--card))",
+          borderLeft: "1px solid hsl(var(--border))",
+          display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden",
+        }}>
           {/* Panel header */}
-          <div
-            style={{
-              padding: "12px 14px",
-              borderBottom: "1px solid hsl(var(--border))",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              flexShrink: 0,
-            }}
-          >
+          <div style={{
+            padding: "12px 14px", borderBottom: "1px solid hsl(var(--border))",
+            display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
+          }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: 13 }}>Configurar Node</div>
               <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", marginTop: 2 }}>
@@ -423,8 +386,12 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
           <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
             <NodeConfigPanel
               node={selectedNode}
+              workflowId={workflowId}
               onUpdateData={updateNodeData}
               onUpdateConfig={updateNodeConfig}
+              onTestNode={handleTestNode}
+              testLoading={testLoading}
+              testResult={testResult}
             />
           </div>
         </div>
@@ -433,283 +400,236 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   );
 }
 
-// ─── Config panel per node type ───────────────────────────────────────────────
+// ─── Config panel ─────────────────────────────────────────────────────────────
 
 function NodeConfigPanel({
   node,
+  workflowId,
   onUpdateData,
   onUpdateConfig,
+  onTestNode,
+  testLoading,
+  testResult,
 }: {
   node: ReactFlowNode;
+  workflowId: string;
   onUpdateData: (k: string, v: unknown) => void;
   onUpdateConfig: (k: string, v: unknown) => void;
+  onTestNode: () => void;
+  testLoading: boolean;
+  testResult: { output: string; success: boolean; durationMs: number } | null;
 }) {
   const cfg = (node.data.config as Record<string, unknown>) ?? {};
   const type = node.data.type as string;
+  const isPinned = !!cfg.pinned;
+  const isNote = type === "note";
+  const isTrigger = isTriggerType(type);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {/* Label (all nodes) */}
+
+      {/* Label */}
       <Field label="Label">
-        <Input
-          value={(node.data.label as string) ?? ""}
-          onChange={(e) => onUpdateData("label", e.target.value)}
-        />
+        <Input value={(node.data.label as string) ?? ""} onChange={(e) => onUpdateData("label", e.target.value)} />
       </Field>
 
-      {/* ── Trigger: Manual ──────────────────────────────────── */}
-      {type === "trigger_manual" && (
-        <InfoBox>O workflow será iniciado manualmente via botão ou API.</InfoBox>
-      )}
+      {/* ── Type-specific config ─────────────────────────────────── */}
+      {type === "trigger_manual" && <InfoBox>O workflow inicia manualmente via botão ou API.</InfoBox>}
 
-      {/* ── Trigger: Webhook ─────────────────────────────────── */}
-      {type === "trigger_webhook" && (
-        <>
-          <Field label="Método HTTP">
-            <Select
-              value={(cfg.method as string) ?? "POST"}
-              onValueChange={(v) => onUpdateConfig("method", v)}
-            >
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => (
-                  <SelectItem key={m} value={m}>{m}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label="Path">
-            <Input
-              value={(cfg.path as string) ?? "/webhook"}
-              onChange={(e) => onUpdateConfig("path", e.target.value)}
-              placeholder="/webhook"
-            />
-          </Field>
-        </>
-      )}
+      {type === "trigger_webhook" && <>
+        <Field label="Método HTTP">
+          <Select value={(cfg.method as string) ?? "POST"} onValueChange={(v) => onUpdateConfig("method", v)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>{["GET","POST","PUT","PATCH","DELETE"].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+          </Select>
+        </Field>
+        <Field label="Path">
+          <Input value={(cfg.path as string) ?? "/webhook"} onChange={(e) => onUpdateConfig("path", e.target.value)} placeholder="/webhook" />
+        </Field>
+      </>}
 
-      {/* ── Trigger: Schedule ────────────────────────────────── */}
-      {type === "trigger_schedule" && (
-        <>
-          <Field label="Cron Expression">
-            <Input
-              value={(cfg.cron as string) ?? "0 9 * * *"}
-              onChange={(e) => onUpdateConfig("cron", e.target.value)}
-              placeholder="0 9 * * *"
-              style={{ fontFamily: "monospace" }}
-            />
-          </Field>
-          <InfoBox>
-            Formato: <code style={{ color: "#14b8a6" }}>min hora dia mês dia-semana</code>
-            <br />Ex: <code>0 9 * * *</code> = todo dia às 09:00
-          </InfoBox>
-        </>
-      )}
+      {type === "trigger_schedule" && <>
+        <Field label="Cron Expression">
+          <Input value={(cfg.cron as string) ?? "0 9 * * *"} onChange={(e) => onUpdateConfig("cron", e.target.value)} placeholder="0 9 * * *" style={{ fontFamily: "monospace" }} />
+        </Field>
+        <InfoBox>Ex: <code style={{ color: "#14b8a6" }}>0 9 * * *</code> = todo dia às 09:00</InfoBox>
+      </>}
 
-      {/* ── Trigger: Subflow ─────────────────────────────────── */}
-      {type === "trigger_subflow" && (
-        <InfoBox>Este workflow será chamado como sub-flow por outro workflow.</InfoBox>
-      )}
+      {type === "trigger_subflow" && <InfoBox>Este workflow é chamado como sub-flow por outro workflow.</InfoBox>}
 
-      {/* ── Code ─────────────────────────────────────────────── */}
       {type === "code" && (
         <Field label="Código Python">
           <div style={{ border: "1px solid hsl(var(--border))", borderRadius: 6, overflow: "hidden" }}>
-            <CodeMirror
-              value={(cfg.code as string) ?? ""}
-              height="260px"
-              theme="dark"
-              extensions={[python()]}
-              onChange={(val) => onUpdateConfig("code", val)}
-            />
+            <CodeMirror value={(cfg.code as string) ?? ""} height="220px" theme="dark" extensions={[python()]} onChange={(val) => onUpdateConfig("code", val)} />
           </div>
         </Field>
       )}
 
-      {/* ── Condition ────────────────────────────────────────── */}
       {type === "condition" && (
-        <Field label="Expressão Python (retorna True/False)">
-          <Input
-            value={(cfg.expression as string) ?? ""}
-            onChange={(e) => onUpdateConfig("expression", e.target.value)}
-            placeholder="len(result) > 0"
-            style={{ fontFamily: "monospace" }}
-          />
+        <Field label="Expressão Python (True/False)">
+          <Input value={(cfg.expression as string) ?? ""} onChange={(e) => onUpdateConfig("expression", e.target.value)} placeholder="len(result) > 0" style={{ fontFamily: "monospace" }} />
         </Field>
       )}
 
-      {/* ── Loop ─────────────────────────────────────────────── */}
       {type === "loop" && (
-        <Field label="Expressão da lista (Python)">
-          <Input
-            value={(cfg.itemsExpression as string) ?? ""}
-            onChange={(e) => onUpdateConfig("itemsExpression", e.target.value)}
-            placeholder="[1, 2, 3]"
-            style={{ fontFamily: "monospace" }}
-          />
+        <Field label="Lista de itens (Python)">
+          <Input value={(cfg.itemsExpression as string) ?? ""} onChange={(e) => onUpdateConfig("itemsExpression", e.target.value)} placeholder="[1, 2, 3]" style={{ fontFamily: "monospace" }} />
         </Field>
       )}
 
-      {/* ── Set Variable ─────────────────────────────────────── */}
-      {type === "set_variable" && (
-        <>
-          <Field label="Chave">
-            <Input
-              value={(cfg.key as string) ?? ""}
-              onChange={(e) => onUpdateConfig("key", e.target.value)}
-              placeholder="MY_VAR"
-            />
-          </Field>
-          <Field label="Valor">
-            <Input
-              value={(cfg.value as string) ?? ""}
-              onChange={(e) => onUpdateConfig("value", e.target.value)}
-              placeholder="valor"
-            />
-          </Field>
-        </>
-      )}
+      {type === "set_variable" && <>
+        <Field label="Chave"><Input value={(cfg.key as string) ?? ""} onChange={(e) => onUpdateConfig("key", e.target.value)} placeholder="MY_VAR" /></Field>
+        <Field label="Valor"><Input value={(cfg.value as string) ?? ""} onChange={(e) => onUpdateConfig("value", e.target.value)} /></Field>
+      </>}
 
-      {/* ── Get Variable ─────────────────────────────────────── */}
       {type === "get_variable" && (
-        <Field label="Chave">
-          <Input
-            value={(cfg.key as string) ?? ""}
-            onChange={(e) => onUpdateConfig("key", e.target.value)}
-            placeholder="MY_VAR"
-          />
-        </Field>
+        <Field label="Chave"><Input value={(cfg.key as string) ?? ""} onChange={(e) => onUpdateConfig("key", e.target.value)} placeholder="MY_VAR" /></Field>
       )}
 
-      {/* ── Transform ────────────────────────────────────────── */}
       {type === "transform" && (
-        <Field label="Código Python (usa variável `input`)">
+        <Field label="Código Python (variável `input`)">
           <div style={{ border: "1px solid hsl(var(--border))", borderRadius: 6, overflow: "hidden" }}>
-            <CodeMirror
-              value={(cfg.code as string) ?? "output = input"}
-              height="180px"
-              theme="dark"
-              extensions={[python()]}
-              onChange={(val) => onUpdateConfig("code", val)}
-            />
+            <CodeMirror value={(cfg.code as string) ?? "output = input"} height="160px" theme="dark" extensions={[python()]} onChange={(val) => onUpdateConfig("code", val)} />
           </div>
         </Field>
       )}
 
-      {/* ── HTTP Request ─────────────────────────────────────── */}
-      {type === "http_request" && (
-        <>
-          <Field label="Método">
-            <Select
-              value={(cfg.method as string) ?? "GET"}
-              onValueChange={(v) => onUpdateConfig("method", v)}
-            >
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => (
-                  <SelectItem key={m} value={m}>{m}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label="URL">
-            <Input
-              value={(cfg.url as string) ?? ""}
-              onChange={(e) => onUpdateConfig("url", e.target.value)}
-              placeholder="https://api.example.com/endpoint"
-            />
-          </Field>
-          <Field label="Body (JSON)">
-            <Textarea
-              value={(cfg.body as string) ?? ""}
-              onChange={(e) => onUpdateConfig("body", e.target.value)}
-              placeholder='{"key": "value"}'
-              rows={3}
-              style={{ fontFamily: "monospace", fontSize: 12 }}
-            />
-          </Field>
-        </>
-      )}
+      {type === "http_request" && <>
+        <Field label="Método">
+          <Select value={(cfg.method as string) ?? "GET"} onValueChange={(v) => onUpdateConfig("method", v)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>{["GET","POST","PUT","PATCH","DELETE"].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+          </Select>
+        </Field>
+        <Field label="URL"><Input value={(cfg.url as string) ?? ""} onChange={(e) => onUpdateConfig("url", e.target.value)} placeholder="https://api.example.com/endpoint" /></Field>
+        <Field label="Body (JSON)">
+          <Textarea value={(cfg.body as string) ?? ""} onChange={(e) => onUpdateConfig("body", e.target.value)} placeholder='{"key": "value"}' rows={3} style={{ fontFamily: "monospace", fontSize: 12 }} />
+        </Field>
+      </>}
 
-      {/* ── Wait ─────────────────────────────────────────────── */}
       {type === "wait" && (
-        <Field label="Segundos de espera">
-          <Input
-            type="number"
-            min={1}
-            value={(cfg.seconds as number) ?? 5}
-            onChange={(e) => onUpdateConfig("seconds", Number(e.target.value))}
-          />
+        <Field label="Segundos">
+          <Input type="number" min={1} value={(cfg.seconds as number) ?? 5} onChange={(e) => onUpdateConfig("seconds", Number(e.target.value))} />
         </Field>
       )}
 
-      {/* ── Note ─────────────────────────────────────────────── */}
-      {type === "note" && (
-        <Field label="Texto da nota">
-          <Textarea
-            value={(cfg.text as string) ?? ""}
-            onChange={(e) => onUpdateConfig("text", e.target.value)}
-            rows={4}
-          />
-        </Field>
+      {isNote && (
+        <Field label="Texto"><Textarea value={(cfg.text as string) ?? ""} onChange={(e) => onUpdateConfig("text", e.target.value)} rows={4} /></Field>
       )}
 
-      {/* ── Advanced (all non-trigger, non-note) ─────────────── */}
-      {!isTriggerType(type) && type !== "note" && (
-        <div
-          style={{
-            paddingTop: 14,
-            borderTop: "1px solid hsl(var(--border))",
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: "0.07em",
-              textTransform: "uppercase",
-              color: "hsl(var(--muted-foreground))",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
+      {/* ── Pin / Mock Data section ──────────────────────────────── */}
+      {!isNote && (
+        <div style={{ borderTop: "1px solid hsl(var(--border))", paddingTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <div style={{
+                width: 24, height: 24, borderRadius: 6,
+                background: isPinned ? "rgba(245,158,11,0.15)" : "rgba(255,255,255,0.05)",
+                border: `1px solid ${isPinned ? "rgba(245,158,11,0.4)" : "hsl(var(--border))"}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Pin size={12} color={isPinned ? "#f59e0b" : "hsl(var(--muted-foreground))"} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600 }}>Mock Data (Pin)</div>
+                <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))" }}>
+                  {isPinned ? "Usando dados mockados — nodo não executa" : "Desativado — nodo executa normalmente"}
+                </div>
+              </div>
+            </div>
+            <Switch checked={isPinned} onCheckedChange={(v) => {
+              onUpdateConfig("pinned", v);
+              if (!v) onUpdateConfig("mockOutput", "");
+            }} />
+          </div>
+
+          {isPinned && (
+            <Field label="Output mockado (retornado sem executar)">
+              <Textarea
+                value={(cfg.mockOutput as string) ?? ""}
+                onChange={(e) => onUpdateConfig("mockOutput", e.target.value)}
+                placeholder='{"result": "valor mockado"}'
+                rows={4}
+                style={{ fontFamily: "monospace", fontSize: 12, borderColor: "rgba(245,158,11,0.4)" }}
+              />
+            </Field>
+          )}
+        </div>
+      )}
+
+      {/* ── Test single node ─────────────────────────────────────── */}
+      {!isNote && (
+        <div style={{ borderTop: "1px solid hsl(var(--border))", paddingTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{
+            fontSize: 11, fontWeight: 700, letterSpacing: "0.07em",
+            textTransform: "uppercase", color: "hsl(var(--muted-foreground))",
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <FlaskConical size={12} /> Teste individual
+          </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onTestNode}
+            disabled={testLoading}
+            style={{ width: "100%", justifyContent: "center" }}
           >
+            {testLoading
+              ? <><Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> Executando...</>
+              : <><FlaskConical className="h-3.5 w-3.5 mr-2" /> Testar este nodo</>}
+          </Button>
+
+          {testResult && (
+            <div style={{
+              border: `1px solid ${testResult.success ? "rgba(20,184,166,0.35)" : "rgba(239,68,68,0.35)"}`,
+              borderRadius: 7,
+              background: testResult.success ? "rgba(20,184,166,0.06)" : "rgba(239,68,68,0.06)",
+              padding: "10px 12px",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                {testResult.success
+                  ? <CheckCircle2 size={13} color="#14b8a6" />
+                  : <XCircle size={13} color="#ef4444" />}
+                <span style={{ fontSize: 11, fontWeight: 600, color: testResult.success ? "#14b8a6" : "#ef4444" }}>
+                  {testResult.success ? "Sucesso" : "Falhou"} — {testResult.durationMs}ms
+                </span>
+              </div>
+              <pre style={{
+                fontSize: 11, color: "hsl(var(--foreground))", whiteSpace: "pre-wrap",
+                wordBreak: "break-all", maxHeight: 160, overflowY: "auto", margin: 0,
+                fontFamily: "monospace",
+              }}>
+                {testResult.output || "(sem output)"}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Advanced (non-trigger, non-note) ─────────────────────── */}
+      {!isTrigger && !isNote && (
+        <div style={{ borderTop: "1px solid hsl(var(--border))", paddingTop: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{
+            fontSize: 11, fontWeight: 700, letterSpacing: "0.07em",
+            textTransform: "uppercase", color: "hsl(var(--muted-foreground))",
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
             <Settings size={12} /> Avançado
           </div>
-
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 13 }}>Continuar em caso de erro</span>
-            <Switch
-              checked={!!(node.data.continueOnError)}
-              onCheckedChange={(v) => onUpdateData("continueOnError", v)}
-            />
+            <Switch checked={!!node.data.continueOnError} onCheckedChange={(v) => onUpdateData("continueOnError", v)} />
           </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 13 }}>Parar em caso de erro</span>
-            <Switch
-              checked={!!(node.data.stopOnError)}
-              onCheckedChange={(v) => onUpdateData("stopOnError", v)}
-            />
+            <Switch checked={!!node.data.stopOnError} onCheckedChange={(v) => onUpdateData("stopOnError", v)} />
           </div>
           <Field label="Tentativas de retry">
-            <Input
-              type="number"
-              min={0}
-              max={10}
-              value={(node.data.retryCount as number) ?? 0}
-              onChange={(e) => onUpdateData("retryCount", Number(e.target.value))}
-            />
+            <Input type="number" min={0} max={10} value={(node.data.retryCount as number) ?? 0} onChange={(e) => onUpdateData("retryCount", Number(e.target.value))} />
           </Field>
           <Field label="Delay entre retries (ms)">
-            <Input
-              type="number"
-              min={100}
-              value={(node.data.retryDelayMs as number) ?? 1000}
-              onChange={(e) => onUpdateData("retryDelayMs", Number(e.target.value))}
-            />
+            <Input type="number" min={100} value={(node.data.retryDelayMs as number) ?? 1000} onChange={(e) => onUpdateData("retryDelayMs", Number(e.target.value))} />
           </Field>
         </div>
       )}
@@ -717,14 +637,12 @@ function NodeConfigPanel({
   );
 }
 
-// ─── Small helper components ─────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <label style={{ fontSize: 12, fontWeight: 500, color: "hsl(var(--foreground))" }}>
-        {label}
-      </label>
+      <label style={{ fontSize: 12, fontWeight: 500, color: "hsl(var(--foreground))" }}>{label}</label>
       {children}
     </div>
   );
@@ -732,23 +650,17 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function InfoBox({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      style={{
-        background: "rgba(255,255,255,0.04)",
-        border: "1px solid hsl(var(--border))",
-        borderRadius: 7,
-        padding: "10px 12px",
-        fontSize: 12,
-        color: "hsl(var(--muted-foreground))",
-        lineHeight: 1.6,
-      }}
-    >
+    <div style={{
+      background: "rgba(255,255,255,0.04)", border: "1px solid hsl(var(--border))",
+      borderRadius: 7, padding: "10px 12px", fontSize: 12,
+      color: "hsl(var(--muted-foreground))", lineHeight: 1.6,
+    }}>
       {children}
     </div>
   );
 }
 
-// ─── Public export (wraps with ReactFlowProvider) ────────────────────────────
+// ─── Public export ────────────────────────────────────────────────────────────
 
 export default function WorkflowEditor() {
   const { id } = useParams();

@@ -297,29 +297,68 @@ async function runWorkflow({
   try {
     await addLog(executionId, null, "info", `Starting workflow "${workflowName}"`);
 
-    // Build adjacency for ordering: find nodes with no incoming edges first
-    const incomingMap = new Map<string, string[]>();
-    for (const node of nodes) incomingMap.set(node.id, []);
-    for (const edge of edges) {
-      const arr = incomingMap.get(edge.targetNodeId) ?? [];
-      arr.push(edge.sourceNodeId);
-      incomingMap.set(edge.targetNodeId, arr);
+    // ── 1. Find trigger nodes ──────────────────────────────────────
+    const triggerNodes = nodes.filter((n) => String(n.type).startsWith("trigger_"));
+    if (triggerNodes.length === 0) {
+      await addLog(executionId, null, "error", "No trigger node found — workflow aborted");
+      await db.update(executionsTable).set({
+        status: "failed",
+        finishedAt: new Date(),
+        durationMs: Date.now() - startTime,
+        errorMessage: "No trigger node found",
+      }).where(eq(executionsTable.id, executionId));
+      return;
     }
 
-    // Topological sort
+    // ── 2. BFS to find reachable nodes from triggers ───────────────
+    const childrenMap = new Map<string, string[]>();
+    for (const node of nodes) childrenMap.set(node.id, []);
+    for (const edge of edges) {
+      const arr = childrenMap.get(edge.sourceNodeId) ?? [];
+      arr.push(edge.targetNodeId);
+      childrenMap.set(edge.sourceNodeId, arr);
+    }
+
+    const reachable = new Set<string>(triggerNodes.map((n) => n.id));
+    const bfsQueue = [...triggerNodes.map((n) => n.id)];
+    let bfsIdx = 0;
+    while (bfsIdx < bfsQueue.length) {
+      const cur = bfsQueue[bfsIdx++];
+      for (const child of childrenMap.get(cur) ?? []) {
+        if (!reachable.has(child)) {
+          reachable.add(child);
+          bfsQueue.push(child);
+        }
+      }
+    }
+
+    const reachableNodes = nodes.filter((n) => reachable.has(n.id));
+    await addLog(executionId, null, "info",
+      `Executing ${reachableNodes.length} of ${nodes.length} nodes (connected to trigger)`);
+
+    // ── 3. Topological sort of reachable nodes ─────────────────────
+    const incomingMap = new Map<string, string[]>();
+    for (const node of reachableNodes) incomingMap.set(node.id, []);
+    for (const edge of edges) {
+      if (reachable.has(edge.sourceNodeId) && reachable.has(edge.targetNodeId)) {
+        const arr = incomingMap.get(edge.targetNodeId) ?? [];
+        arr.push(edge.sourceNodeId);
+        incomingMap.set(edge.targetNodeId, arr);
+      }
+    }
+
     const sorted: any[] = [];
     const visited = new Set<string>();
 
     function visit(nodeId: string) {
       if (visited.has(nodeId)) return;
       visited.add(nodeId);
-      const node = nodes.find((n) => n.id === nodeId);
-      if (!node) return;
       const deps = incomingMap.get(nodeId) ?? [];
       for (const dep of deps) visit(dep);
-      sorted.push(node);
+      const node = reachableNodes.find((n) => n.id === nodeId);
+      if (node) sorted.push(node);
     }
-    for (const node of nodes) visit(node.id);
+    for (const node of reachableNodes) visit(node.id);
 
     const nodeResults: Record<string, any> = {};
     for (const node of sorted) {
@@ -365,7 +404,13 @@ async function runWorkflow({
       let error: string | null = null;
 
       try {
-        if (node.type === "code") {
+        // ── Pinned: return mock output without executing ────────────
+        const nodeConfig = node.config as Record<string, unknown>;
+        if (nodeConfig.pinned === true) {
+          output = String(nodeConfig.mockOutput ?? "(pinned — sem output definido)");
+          success = true;
+          await addLog(executionId, node.id, "info", `[PINNED] ${output}`);
+        } else if (node.type === "code") {
           const config = node.config as Record<string, unknown>;
           const code = (config.code as string) ?? "";
 
