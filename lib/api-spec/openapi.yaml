@@ -3,20 +3,32 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: npython - Python automation workflow platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: workflows
+    description: Workflow management
+  - name: nodes
+    description: Workflow node management
+  - name: executions
+    description: Execution management
+  - name: variables
+    description: Global variables
+  - name: credentials
+    description: Credential management
+  - name: packages
+    description: Python package management
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +36,570 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ── Workflows ──────────────────────────────────────────────────────────────
+  /workflows:
+    get:
+      operationId: listWorkflows
+      tags: [workflows]
+      summary: List all workflows
+      responses:
+        "200":
+          description: List of workflows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Workflow"
+    post:
+      operationId: createWorkflow
+      tags: [workflows]
+      summary: Create a workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkflowBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workflow"
+
+  /workflows/{id}:
+    get:
+      operationId: getWorkflow
+      tags: [workflows]
+      summary: Get a workflow by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Workflow detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowDetail"
+        "404":
+          description: Not found
+    put:
+      operationId: updateWorkflow
+      tags: [workflows]
+      summary: Update a workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWorkflowBody"
+      responses:
+        "200":
+          description: Updated workflow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workflow"
+    delete:
+      operationId: deleteWorkflow
+      tags: [workflows]
+      summary: Delete a workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /workflows/{id}/execute:
+    post:
+      operationId: executeWorkflow
+      tags: [workflows]
+      summary: Trigger a full workflow execution
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Execution started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Execution"
+
+  /workflows/{id}/packages:
+    get:
+      operationId: listWorkflowPackages
+      tags: [packages]
+      summary: List installed packages for a workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Package list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Package"
+    post:
+      operationId: installPackage
+      tags: [packages]
+      summary: Install a Python package into workflow venv
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InstallPackageBody"
+      responses:
+        "200":
+          description: Package installed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Package"
+
+  /workflows/{id}/packages/{packageName}:
+    delete:
+      operationId: uninstallPackage
+      tags: [packages]
+      summary: Uninstall a Python package from workflow venv
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: packageName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Package uninstalled
+
+  /workflows/{id}/stats:
+    get:
+      operationId: getWorkflowStats
+      tags: [workflows]
+      summary: Get execution statistics for a workflow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowStats"
+
+  # ── Nodes ──────────────────────────────────────────────────────────────────
+  /workflows/{workflowId}/nodes:
+    get:
+      operationId: listNodes
+      tags: [nodes]
+      summary: List nodes in a workflow
+      parameters:
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Node list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Node"
+    post:
+      operationId: createNode
+      tags: [nodes]
+      summary: Add a node to a workflow
+      parameters:
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNodeBody"
+      responses:
+        "201":
+          description: Node created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+
+  /workflows/{workflowId}/nodes/{nodeId}:
+    put:
+      operationId: updateNode
+      tags: [nodes]
+      summary: Update a node
+      parameters:
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNodeBody"
+      responses:
+        "200":
+          description: Updated node
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+    delete:
+      operationId: deleteNode
+      tags: [nodes]
+      summary: Delete a node
+      parameters:
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /workflows/{workflowId}/nodes/{nodeId}/execute:
+    post:
+      operationId: executeNode
+      tags: [nodes]
+      summary: Execute a single node in isolation
+      parameters:
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteNodeBody"
+      responses:
+        "200":
+          description: Node execution result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeExecutionResult"
+
+  # ── Executions ─────────────────────────────────────────────────────────────
+  /executions:
+    get:
+      operationId: listExecutions
+      tags: [executions]
+      summary: List recent executions across all workflows
+      parameters:
+        - name: workflowId
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, running, success, failed, stopped]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Execution list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Execution"
+
+  /executions/{id}:
+    get:
+      operationId: getExecution
+      tags: [executions]
+      summary: Get execution detail with logs
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Execution detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionDetail"
+
+  /executions/{id}/stop:
+    post:
+      operationId: stopExecution
+      tags: [executions]
+      summary: Stop a running execution
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Execution"
+
+  /executions/{id}/logs:
+    get:
+      operationId: getExecutionLogs
+      tags: [executions]
+      summary: Get log lines for an execution
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: nodeId
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Log lines
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LogLine"
+
+  /executions/summary:
+    get:
+      operationId: getExecutionSummary
+      tags: [executions]
+      summary: Dashboard summary - counts by status and recent activity
+      responses:
+        "200":
+          description: Summary stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionSummary"
+
+  # ── Global Variables ───────────────────────────────────────────────────────
+  /variables:
+    get:
+      operationId: listVariables
+      tags: [variables]
+      summary: List all global variables
+      responses:
+        "200":
+          description: Variable list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Variable"
+    post:
+      operationId: createVariable
+      tags: [variables]
+      summary: Create a global variable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVariableBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Variable"
+
+  /variables/{id}:
+    put:
+      operationId: updateVariable
+      tags: [variables]
+      summary: Update a global variable
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVariableBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Variable"
+    delete:
+      operationId: deleteVariable
+      tags: [variables]
+      summary: Delete a global variable
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  # ── Credentials ────────────────────────────────────────────────────────────
+  /credentials:
+    get:
+      operationId: listCredentials
+      tags: [credentials]
+      summary: List credentials (values masked)
+      responses:
+        "200":
+          description: Credential list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Credential"
+    post:
+      operationId: createCredential
+      tags: [credentials]
+      summary: Create a credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCredentialBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+
+  /credentials/{id}:
+    put:
+      operationId: updateCredential
+      tags: [credentials]
+      summary: Update a credential
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCredentialBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+    delete:
+      operationId: deleteCredential
+      tags: [credentials]
+      summary: Delete a credential
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +607,464 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    # ── Workflow ────────────────────────────────────────────────────────────
+    Workflow:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        active:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+        nodeCount:
+          type: integer
+        lastExecutedAt:
+          type: string
+          nullable: true
+        lastStatus:
+          type: string
+          nullable: true
+          enum: [pending, running, success, failed, stopped, null]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, name, active, nodeCount, createdAt, updatedAt]
+
+    WorkflowDetail:
+      allOf:
+        - $ref: "#/components/schemas/Workflow"
+        - type: object
+          properties:
+            nodes:
+              type: array
+              items:
+                $ref: "#/components/schemas/Node"
+            edges:
+              type: array
+              items:
+                $ref: "#/components/schemas/Edge"
+
+    WorkflowStats:
+      type: object
+      properties:
+        totalExecutions:
+          type: integer
+        successCount:
+          type: integer
+        failedCount:
+          type: integer
+        avgDurationMs:
+          type: number
+          nullable: true
+        lastSevenDays:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+              count:
+                type: integer
+              successCount:
+                type: integer
+              failedCount:
+                type: integer
+            required: [date, count, successCount, failedCount]
+      required: [totalExecutions, successCount, failedCount, lastSevenDays]
+
+    CreateWorkflowBody:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+      required: [name]
+
+    UpdateWorkflowBody:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        active:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Node"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/Edge"
+
+    # ── Node ────────────────────────────────────────────────────────────────
+    Node:
+      type: object
+      properties:
+        id:
+          type: string
+        workflowId:
+          type: string
+        type:
+          type: string
+          enum: [code, set_variable, get_variable, trigger_manual, trigger_schedule, condition, http_request, wait, note]
+        label:
+          type: string
+        positionX:
+          type: number
+        positionY:
+          type: number
+        config:
+          type: object
+          description: Node-type specific configuration (code, schedule, condition, etc.)
+          additionalProperties: true
+        retryCount:
+          type: integer
+          default: 0
+        retryDelayMs:
+          type: integer
+          default: 1000
+        continueOnError:
+          type: boolean
+          default: false
+        stopOnError:
+          type: boolean
+          default: true
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, workflowId, type, label, positionX, positionY, config, createdAt, updatedAt]
+
+    Edge:
+      type: object
+      properties:
+        id:
+          type: string
+        sourceNodeId:
+          type: string
+        targetNodeId:
+          type: string
+        label:
+          type: string
+          nullable: true
+        condition:
+          type: string
+          nullable: true
+          enum: [always, on_success, on_error, null]
+      required: [id, sourceNodeId, targetNodeId]
+
+    CreateNodeBody:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [code, set_variable, get_variable, trigger_manual, trigger_schedule, condition, http_request, wait, note]
+        label:
+          type: string
+        positionX:
+          type: number
+        positionY:
+          type: number
+        config:
+          type: object
+          additionalProperties: true
+      required: [type, label, positionX, positionY]
+
+    UpdateNodeBody:
+      type: object
+      properties:
+        label:
+          type: string
+        positionX:
+          type: number
+        positionY:
+          type: number
+        config:
+          type: object
+          additionalProperties: true
+        retryCount:
+          type: integer
+        retryDelayMs:
+          type: integer
+        continueOnError:
+          type: boolean
+        stopOnError:
+          type: boolean
+
+    ExecuteNodeBody:
+      type: object
+      properties:
+        inputData:
+          type: object
+          additionalProperties: true
+
+    NodeExecutionResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        output:
+          type: string
+        returnValue:
+          type: object
+          nullable: true
+          additionalProperties: true
+        durationMs:
+          type: integer
+        error:
+          type: string
+          nullable: true
+      required: [success, output, durationMs]
+
+    # ── Execution ───────────────────────────────────────────────────────────
+    Execution:
+      type: object
+      properties:
+        id:
+          type: string
+        workflowId:
+          type: string
+        workflowName:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, success, failed, stopped]
+        startedAt:
+          type: string
+        finishedAt:
+          type: string
+          nullable: true
+        durationMs:
+          type: integer
+          nullable: true
+        triggeredBy:
+          type: string
+          enum: [manual, schedule, api]
+        errorMessage:
+          type: string
+          nullable: true
+      required: [id, workflowId, workflowName, status, startedAt, triggeredBy]
+
+    ExecutionDetail:
+      allOf:
+        - $ref: "#/components/schemas/Execution"
+        - type: object
+          properties:
+            nodeResults:
+              type: array
+              items:
+                type: object
+                properties:
+                  nodeId:
+                    type: string
+                  nodeLabel:
+                    type: string
+                  status:
+                    type: string
+                    enum: [pending, running, success, failed, skipped]
+                  startedAt:
+                    type: string
+                    nullable: true
+                  finishedAt:
+                    type: string
+                    nullable: true
+                  durationMs:
+                    type: integer
+                    nullable: true
+                  output:
+                    type: string
+                    nullable: true
+                  error:
+                    type: string
+                    nullable: true
+                required: [nodeId, nodeLabel, status]
+
+    ExecutionSummary:
+      type: object
+      properties:
+        totalToday:
+          type: integer
+        successToday:
+          type: integer
+        failedToday:
+          type: integer
+        runningNow:
+          type: integer
+        recentExecutions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Execution"
+        topWorkflows:
+          type: array
+          items:
+            type: object
+            properties:
+              workflowId:
+                type: string
+              workflowName:
+                type: string
+              executionCount:
+                type: integer
+            required: [workflowId, workflowName, executionCount]
+      required: [totalToday, successToday, failedToday, runningNow, recentExecutions, topWorkflows]
+
+    LogLine:
+      type: object
+      properties:
+        id:
+          type: string
+        executionId:
+          type: string
+        nodeId:
+          type: string
+          nullable: true
+        level:
+          type: string
+          enum: [info, warn, error, debug]
+        message:
+          type: string
+        timestamp:
+          type: string
+      required: [id, executionId, level, message, timestamp]
+
+    # ── Variable ────────────────────────────────────────────────────────────
+    Variable:
+      type: object
+      properties:
+        id:
+          type: string
+        key:
+          type: string
+        value:
+          type: string
+        type:
+          type: string
+          enum: [string, number, boolean, json]
+        description:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, key, value, type, createdAt, updatedAt]
+
+    CreateVariableBody:
+      type: object
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+        type:
+          type: string
+          enum: [string, number, boolean, json]
+        description:
+          type: string
+      required: [key, value, type]
+
+    UpdateVariableBody:
+      type: object
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+        type:
+          type: string
+          enum: [string, number, boolean, json]
+        description:
+          type: string
+
+    # ── Credential ──────────────────────────────────────────────────────────
+    Credential:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [api_key, basic_auth, oauth2, custom]
+        description:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, name, type, createdAt, updatedAt]
+
+    CreateCredentialBody:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [api_key, basic_auth, oauth2, custom]
+        description:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+      required: [name, type, data]
+
+    UpdateCredentialBody:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+
+    # ── Package ─────────────────────────────────────────────────────────────
+    Package:
+      type: object
+      properties:
+        id:
+          type: string
+        workflowId:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+          nullable: true
+        installedAt:
+          type: string
+      required: [id, workflowId, name, installedAt]
+
+    InstallPackageBody:
+      type: object
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+      required: [name]
