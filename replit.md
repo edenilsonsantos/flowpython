@@ -1,8 +1,8 @@
-# npython
+# flowpython
 
 ## Overview
 
-**npython** is a visual low-code Python automation platform inspired by n8n. It lets developers drag, drop, and connect Python code blocks on a canvas to build automations that run locally or in Docker.
+**flowpython** is a visual low-code Python automation platform inspired by n8n. It lets developers drag, drop, and connect Python code blocks on a canvas to build automations that run locally or in Docker.
 
 ## Architecture
 

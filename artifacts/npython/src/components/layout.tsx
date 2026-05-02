@@ -25,7 +25,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <aside className="w-64 flex-shrink-0 border-r border-border bg-card flex flex-col">
         <div className="h-16 flex items-center px-6 border-b border-border">
           <Terminal className="h-6 w-6 text-primary mr-3" />
-          <span className="font-bold text-lg tracking-tight">npython</span>
+          <span className="font-bold text-lg tracking-tight">flowpython</span>
         </div>
         
         <nav className="flex-1 py-4 overflow-y-auto">
