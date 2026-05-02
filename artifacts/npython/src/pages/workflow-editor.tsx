@@ -528,6 +528,20 @@ function NodeConfigPanel({
         <PipInstallConfig cfg={cfg} onUpdateConfig={onUpdateConfig} />
       )}
 
+      {type === "switch" && (
+        <SwitchNodeConfig cfg={cfg} onUpdateConfig={onUpdateConfig} />
+      )}
+
+      {type === "merge_lists" && (
+        <MergeListsConfig cfg={cfg} onUpdateConfig={onUpdateConfig} />
+      )}
+
+      {(type === "filter_list" || type === "batch_split" || type === "aggregate" ||
+        type === "split_out" || type === "sort_list" || type === "remove_duplicates" ||
+        type === "limit") && (
+        <DataNodeConfig nodeType={type} cfg={cfg} onUpdateConfig={onUpdateConfig} />
+      )}
+
       {/* ── Pin / Mock Data section ──────────────────────────────── */}
       {!isNote && (
         <div style={{ borderTop: "1px solid hsl(var(--border))", paddingTop: 14 }}>
@@ -832,6 +846,266 @@ function PipInstallConfig({
       )}
     </div>
   );
+}
+
+// ─── Switch Node Config ────────────────────────────────────────────────────────
+
+function SwitchNodeConfig({
+  cfg,
+  onUpdateConfig,
+}: {
+  cfg: Record<string, unknown>;
+  onUpdateConfig: (k: string, v: unknown) => void;
+}) {
+  const conditions = (cfg.conditions as Array<{ expression: string; label: string }>) ?? [];
+  const update = (idx: number, field: "expression" | "label", val: string) => {
+    const next = conditions.map((c, i) => i === idx ? { ...c, [field]: val } : c);
+    onUpdateConfig("conditions", next);
+  };
+  const add = () => onUpdateConfig("conditions", [...conditions, { expression: "value > 0", label: `branch${conditions.length + 1}` }]);
+  const remove = (idx: number) => onUpdateConfig("conditions", conditions.filter((_, i) => i !== idx));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Field label="Variável de entrada (pipeline)">
+        <Input value={(cfg.inputVar as string) ?? ""} onChange={(e) => onUpdateConfig("inputVar", e.target.value)} placeholder="myValue" style={{ fontFamily: "monospace" }} />
+      </Field>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <label style={{ fontSize: 12, fontWeight: 500 }}>Condições ({conditions.length})</label>
+          <Button size="sm" variant="outline" onClick={add} style={{ height: 26, fontSize: 11, padding: "0 10px" }}>
+            <Plus size={11} className="mr-1" /> Adicionar
+          </Button>
+        </div>
+        {conditions.length === 0 && (
+          <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", textAlign: "center", padding: "10px 0" }}>Nenhuma condição adicionada</div>
+        )}
+        {conditions.map((cond, idx) => (
+          <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+            <Input value={cond.expression} onChange={(e) => update(idx, "expression", e.target.value)} placeholder="value > 100" style={{ fontFamily: "monospace", fontSize: 11, flex: 2 }} />
+            <Input value={cond.label} onChange={(e) => update(idx, "label", e.target.value)} placeholder="branch" style={{ fontFamily: "monospace", fontSize: 11, flex: 1 }} />
+            <Button size="icon" variant="ghost" onClick={() => remove(idx)} style={{ height: 28, width: 28, flexShrink: 0 }}>
+              <Trash2 size={12} />
+            </Button>
+          </div>
+        ))}
+        {conditions.length > 0 && (
+          <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 4 }}>
+            Colunas: <strong>expressão Python</strong> (usa <code>value</code> ou campos do dict) → <strong>label da branch</strong>
+          </div>
+        )}
+      </div>
+      <Field label="Branch fallback (sem match)">
+        <Input value={(cfg.fallback as string) ?? "default"} onChange={(e) => onUpdateConfig("fallback", e.target.value)} placeholder="default" style={{ fontFamily: "monospace" }} />
+      </Field>
+      <InfoBox>O resultado fica em <code>_switch_result</code> no contexto do pipeline para uso em nodos downstream.</InfoBox>
+    </div>
+  );
+}
+
+// ─── Merge Lists Config ────────────────────────────────────────────────────────
+
+function MergeListsConfig({
+  cfg,
+  onUpdateConfig,
+}: {
+  cfg: Record<string, unknown>;
+  onUpdateConfig: (k: string, v: unknown) => void;
+}) {
+  const vars = (cfg.vars as string[]) ?? [];
+  const addVar = () => onUpdateConfig("vars", [...vars, ""]);
+  const updateVar = (idx: number, val: string) => onUpdateConfig("vars", vars.map((v, i) => i === idx ? val : v));
+  const removeVar = (idx: number) => onUpdateConfig("vars", vars.filter((_, i) => i !== idx));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <label style={{ fontSize: 12, fontWeight: 500 }}>Variáveis para combinar ({vars.length})</label>
+          <Button size="sm" variant="outline" onClick={addVar} style={{ height: 26, fontSize: 11, padding: "0 10px" }}>
+            <Plus size={11} className="mr-1" /> Adicionar
+          </Button>
+        </div>
+        {vars.length === 0 && (
+          <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", textAlign: "center", padding: "8px 0" }}>Adicione variáveis do pipeline</div>
+        )}
+        {vars.map((v, idx) => (
+          <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+            <Input value={v} onChange={(e) => updateVar(idx, e.target.value)} placeholder={`lista${idx + 1}`} style={{ fontFamily: "monospace", fontSize: 11 }} />
+            <Button size="icon" variant="ghost" onClick={() => removeVar(idx)} style={{ height: 28, width: 28 }}>
+              <Trash2 size={12} />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <Field label="Modo de combinação">
+        <Select value={(cfg.mode as string) ?? "append"} onValueChange={(v) => onUpdateConfig("mode", v)}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="append">Append — concatenar arrays</SelectItem>
+            <SelectItem value="zip">Zip — mesclar por posição (objeto por objeto)</SelectItem>
+            <SelectItem value="merge_objects">Merge Object — Object.assign no primeiro item</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field label="Variável de saída">
+        <Input value={(cfg.outputVar as string) ?? "merged"} onChange={(e) => onUpdateConfig("outputVar", e.target.value)} placeholder="merged" style={{ fontFamily: "monospace" }} />
+      </Field>
+    </div>
+  );
+}
+
+// ─── Generic Data Node Config ──────────────────────────────────────────────────
+
+function DataNodeConfig({
+  nodeType,
+  cfg,
+  onUpdateConfig,
+}: {
+  nodeType: string;
+  cfg: Record<string, unknown>;
+  onUpdateConfig: (k: string, v: unknown) => void;
+}) {
+  const inputVarField = (
+    <Field label="Variável de entrada (pipeline)">
+      <Input value={(cfg.inputVar as string) ?? ""} onChange={(e) => onUpdateConfig("inputVar", e.target.value)} placeholder="items" style={{ fontFamily: "monospace" }} />
+    </Field>
+  );
+  const outputVarField = (
+    <Field label="Variável de saída">
+      <Input value={(cfg.outputVar as string) ?? ""} onChange={(e) => onUpdateConfig("outputVar", e.target.value)} placeholder="result" style={{ fontFamily: "monospace" }} />
+    </Field>
+  );
+
+  if (nodeType === "filter_list") return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {inputVarField}
+      <Field label="Expressão Python por item (variável: item)">
+        <Input value={(cfg.expression as string) ?? ""} onChange={(e) => onUpdateConfig("expression", e.target.value)} placeholder="item['active'] == True" style={{ fontFamily: "monospace" }} />
+      </Field>
+      {outputVarField}
+      <InfoBox>Equivale a <code>[item for item in lista if (<em>expressão</em>)]</code>. Use <code>item</code> para acessar cada elemento.</InfoBox>
+    </div>
+  );
+
+  if (nodeType === "batch_split") return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {inputVarField}
+      <Field label="Tamanho do lote">
+        <Input type="number" min={1} value={(cfg.batchSize as number) ?? 10} onChange={(e) => onUpdateConfig("batchSize", Number(e.target.value))} />
+      </Field>
+      {outputVarField}
+      <InfoBox>Saída é uma lista de listas — ex.: 25 itens com tamanho 10 → [[...10], [...10], [...5]]</InfoBox>
+    </div>
+  );
+
+  if (nodeType === "aggregate") {
+    const operation = (cfg.operation as string) ?? "count";
+    const needsField = ["sum","avg","min","max","join","list"].includes(operation);
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {inputVarField}
+        <Field label="Operação">
+          <Select value={operation} onValueChange={(v) => onUpdateConfig("operation", v)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="count">Count — quantidade de itens</SelectItem>
+              <SelectItem value="sum">Sum — soma de um campo numérico</SelectItem>
+              <SelectItem value="avg">Average — média de um campo numérico</SelectItem>
+              <SelectItem value="min">Min — menor valor do campo</SelectItem>
+              <SelectItem value="max">Max — maior valor do campo</SelectItem>
+              <SelectItem value="first">First — primeiro item da lista</SelectItem>
+              <SelectItem value="last">Last — último item da lista</SelectItem>
+              <SelectItem value="join">Join — concatenar campo como texto</SelectItem>
+              <SelectItem value="list">List — extrair campo em nova lista</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        {needsField && (
+          <Field label="Campo (deixe vazio para usar o item inteiro)">
+            <Input value={(cfg.field as string) ?? ""} onChange={(e) => onUpdateConfig("field", e.target.value)} placeholder="price" style={{ fontFamily: "monospace" }} />
+          </Field>
+        )}
+        {operation === "join" && (
+          <Field label="Separador">
+            <Input value={(cfg.separator as string) ?? ", "} onChange={(e) => onUpdateConfig("separator", e.target.value)} placeholder=", " />
+          </Field>
+        )}
+        {outputVarField}
+      </div>
+    );
+  }
+
+  if (nodeType === "split_out") return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {inputVarField}
+      <Field label="Campo que contém a lista aninhada">
+        <Input value={(cfg.field as string) ?? "items"} onChange={(e) => onUpdateConfig("field", e.target.value)} placeholder="items" style={{ fontFamily: "monospace" }} />
+      </Field>
+      <Field label="Manter campos do pai junto com cada item">
+        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4 }}>
+          <Switch checked={!!(cfg.keepParent)} onCheckedChange={(v) => onUpdateConfig("keepParent", v)} />
+          <span style={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}>
+            {cfg.keepParent ? "Sim — inclui campos do objeto pai" : "Não — retorna apenas os itens do campo"}
+          </span>
+        </div>
+      </Field>
+      {outputVarField}
+      <InfoBox>Ex: lista de pedidos, cada um com campo <code>items</code> → gera uma lista plana de todos os itens individuais.</InfoBox>
+    </div>
+  );
+
+  if (nodeType === "sort_list") return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {inputVarField}
+      <Field label="Campo para ordenação (vazio = item inteiro)">
+        <Input value={(cfg.key as string) ?? ""} onChange={(e) => onUpdateConfig("key", e.target.value)} placeholder="name" style={{ fontFamily: "monospace" }} />
+      </Field>
+      <Field label="Ordem">
+        <Select value={(cfg.order as string) ?? "asc"} onValueChange={(v) => onUpdateConfig("order", v)}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="asc">Crescente (A → Z, 0 → 9)</SelectItem>
+            <SelectItem value="desc">Decrescente (Z → A, 9 → 0)</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+      {outputVarField}
+    </div>
+  );
+
+  if (nodeType === "remove_duplicates") return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {inputVarField}
+      <Field label="Chave de deduplicação (vazio = item inteiro como JSON)">
+        <Input value={(cfg.key as string) ?? ""} onChange={(e) => onUpdateConfig("key", e.target.value)} placeholder="id" style={{ fontFamily: "monospace" }} />
+      </Field>
+      {outputVarField}
+      <InfoBox>Mantém a primeira ocorrência de cada valor único da chave. Preserva a ordem original.</InfoBox>
+    </div>
+  );
+
+  if (nodeType === "limit") return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {inputVarField}
+      <Field label="Máximo de itens">
+        <Input type="number" min={1} value={(cfg.maxItems as number) ?? 10} onChange={(e) => onUpdateConfig("maxItems", Number(e.target.value))} />
+      </Field>
+      <Field label="Quais itens manter">
+        <Select value={(cfg.keep as string) ?? "first"} onValueChange={(v) => onUpdateConfig("keep", v)}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="first">Primeiros N (slice do início)</SelectItem>
+            <SelectItem value="last">Últimos N (slice do fim)</SelectItem>
+            <SelectItem value="random">N aleatórios (shuffle + slice)</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+      {outputVarField}
+    </div>
+  );
+
+  return null;
 }
 
 // ─── Variable Node Config ─────────────────────────────────────────────────────

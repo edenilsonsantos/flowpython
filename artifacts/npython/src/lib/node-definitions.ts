@@ -1,4 +1,4 @@
-export type NodeCategory = "trigger" | "logic" | "variables" | "data" | "integration" | "utility";
+export type NodeCategory = "trigger" | "logic" | "transform" | "variables" | "data" | "integration" | "utility";
 
 export interface NodeDef {
   type: string;
@@ -13,12 +13,13 @@ export interface NodeDef {
 }
 
 export const NODE_CATEGORY_META: Record<NodeCategory, { label: string; color: string; bg: string }> = {
-  trigger:   { label: "Trigger",   color: "#14b8a6", bg: "rgba(20,184,166,0.12)" },
-  logic:     { label: "Logic",     color: "#a78bfa", bg: "rgba(167,139,250,0.12)" },
-  variables: { label: "Variables", color: "#34d399", bg: "rgba(52,211,153,0.12)"  },
-  data:      { label: "Data",      color: "#fbbf24", bg: "rgba(251,191,36,0.12)"  },
-  integration:{ label: "Integration", color: "#60a5fa", bg: "rgba(96,165,250,0.12)" },
-  utility:   { label: "Utility",   color: "#94a3b8", bg: "rgba(148,163,184,0.12)" },
+  trigger:    { label: "Trigger",    color: "#14b8a6", bg: "rgba(20,184,166,0.12)"  },
+  logic:      { label: "Logic",      color: "#a78bfa", bg: "rgba(167,139,250,0.12)" },
+  transform:  { label: "Transform",  color: "#fb923c", bg: "rgba(251,146,60,0.12)"  },
+  variables:  { label: "Variables",  color: "#34d399", bg: "rgba(52,211,153,0.12)"  },
+  data:       { label: "Data",       color: "#fbbf24", bg: "rgba(251,191,36,0.12)"  },
+  integration:{ label: "Integration",color: "#60a5fa", bg: "rgba(96,165,250,0.12)"  },
+  utility:    { label: "Utility",    color: "#94a3b8", bg: "rgba(148,163,184,0.12)" },
 };
 
 export const NODE_DEFINITIONS: NodeDef[] = [
@@ -69,6 +70,36 @@ export const NODE_DEFINITIONS: NodeDef[] = [
   },
 
   // ── Logic ─────────────────────────────────────────────────────
+  {
+    type: "switch",
+    label: "Switch",
+    description: "Ramifica por múltiplas condições Python",
+    category: "logic",
+    iconName: "ToggleRight",
+    color: "#e879f9",
+    defaultConfig: {
+      inputVar: "",
+      conditions: [{ expression: "value > 0", label: "positivo" }],
+      fallback: "default",
+    },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
+    type: "merge_lists",
+    label: "Merge",
+    description: "Combina listas do pipeline em uma só",
+    category: "logic",
+    iconName: "GitMerge",
+    color: "#a78bfa",
+    defaultConfig: {
+      vars: [],
+      outputVar: "merged",
+      mode: "append",
+    },
+    hasInput: true,
+    hasOutput: true,
+  },
   {
     type: "code",
     label: "Python Code",
@@ -135,7 +166,86 @@ export const NODE_DEFINITIONS: NodeDef[] = [
     hasOutput: true,
   },
 
-  // ── Data ──────────────────────────────────────────────────────
+  // ── Transform ─────────────────────────────────────────────────
+  {
+    type: "filter_list",
+    label: "Filter",
+    description: "Filtra itens de uma lista por expressão Python",
+    category: "transform",
+    iconName: "ListFilter",
+    color: "#fb923c",
+    defaultConfig: { inputVar: "items", outputVar: "filtered", expression: "item['active'] == True" },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
+    type: "batch_split",
+    label: "Split in Batches",
+    description: "Divide lista em lotes de N itens",
+    category: "transform",
+    iconName: "Layers",
+    color: "#fb923c",
+    defaultConfig: { inputVar: "items", outputVar: "batches", batchSize: 10 },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
+    type: "aggregate",
+    label: "Aggregate",
+    description: "Reduz lista a um valor: count, sum, avg, min, max, join",
+    category: "transform",
+    iconName: "Sigma",
+    color: "#fb923c",
+    defaultConfig: { inputVar: "items", outputVar: "result", operation: "count", field: "", separator: ", " },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
+    type: "split_out",
+    label: "Split Out",
+    description: "Explode campo-lista em itens individuais",
+    category: "transform",
+    iconName: "Scissors",
+    color: "#fb923c",
+    defaultConfig: { inputVar: "data", field: "items", outputVar: "split", keepParent: false },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
+    type: "sort_list",
+    label: "Sort",
+    description: "Ordena lista por campo",
+    category: "transform",
+    iconName: "ArrowUpDown",
+    color: "#fb923c",
+    defaultConfig: { inputVar: "items", outputVar: "sorted", key: "", order: "asc" },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
+    type: "remove_duplicates",
+    label: "Remove Duplicates",
+    description: "Remove itens duplicados por chave",
+    category: "transform",
+    iconName: "FilterX",
+    color: "#fb923c",
+    defaultConfig: { inputVar: "items", outputVar: "unique", key: "id" },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
+    type: "limit",
+    label: "Limit",
+    description: "Limita quantidade de itens da lista",
+    category: "transform",
+    iconName: "Hash",
+    color: "#fb923c",
+    defaultConfig: { inputVar: "items", outputVar: "limited", maxItems: 10, keep: "first" },
+    hasInput: true,
+    hasOutput: true,
+  },
+
+  // ── Data (legado) ──────────────────────────────────────────────
   {
     type: "set_variable",
     label: "Set Variable",

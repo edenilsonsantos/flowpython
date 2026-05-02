@@ -3,6 +3,8 @@ import { Handle, Position, NodeProps } from "reactflow";
 import {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
   Variable, Database, Shuffle, Globe, Timer, StickyNote, Pin, Braces, Syringe, Package,
+  ToggleRight, GitMerge, ListFilter, Layers, Sigma, Scissors,
+  ArrowUpDown, FilterX, Hash, MoveRight,
   LucideProps,
 } from "lucide-react";
 import { getNodeDef, NODE_CATEGORY_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
@@ -10,6 +12,8 @@ import { getNodeDef, NODE_CATEGORY_META, VARIABLE_SCOPES } from "@/lib/node-defi
 const ICON_MAP: Record<string, React.FC<LucideProps>> = {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
   Variable, Database, Shuffle, Globe, Timer, StickyNote, Braces, Syringe, Package,
+  ToggleRight, GitMerge, ListFilter, Layers, Sigma, Scissors,
+  ArrowUpDown, FilterX, Hash,
 };
 
 export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) => {
@@ -29,6 +33,11 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
   const scope = cfg.scope as string | undefined;
   const scopeMeta = scope ? VARIABLE_SCOPES.find((s) => s.value === scope) : null;
   const operation = cfg.operation as string | undefined;
+
+  const DATA_NODE_TYPES = ["filter_list","batch_split","aggregate","split_out","sort_list","remove_duplicates","limit","merge_lists","switch"];
+  const isDataNode = DATA_NODE_TYPES.includes(data.type as string);
+  const dataInputVar = cfg.inputVar as string | undefined;
+  const dataOutputVar = (cfg.outputVar as string | undefined) ?? (cfg.field as string | undefined);
 
   const isPip = data.type === "pip_install";
   const pipAction = cfg.action as string | undefined;
@@ -142,6 +151,30 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
           {cfg.key && (
             <span style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 80 }}>
               {cfg.key as string}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Data node: inputVar → outputVar flow */}
+      {isDataNode && (dataInputVar || dataOutputVar) && (
+        <div style={{ padding: "4px 10px 6px", display: "flex", alignItems: "center", gap: 4, minHeight: 22 }}>
+          {dataInputVar && (
+            <span style={{ fontSize: 10, fontFamily: "monospace", color: "#60a5fa", background: "rgba(96,165,250,0.1)", border: "1px solid rgba(96,165,250,0.25)", borderRadius: 4, padding: "1px 5px", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {dataInputVar}
+            </span>
+          )}
+          {dataInputVar && dataOutputVar && (
+            <MoveRight size={10} color={color} style={{ flexShrink: 0 }} />
+          )}
+          {dataOutputVar && (
+            <span style={{ fontSize: 10, fontFamily: "monospace", color: "#34d399", background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.25)", borderRadius: 4, padding: "1px 5px", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {dataOutputVar}
+            </span>
+          )}
+          {data.type === "switch" && cfg.conditions && (
+            <span style={{ fontSize: 9, color: "hsl(var(--muted-foreground))", marginLeft: 2 }}>
+              {((cfg.conditions as unknown[]) ?? []).length} branches
             </span>
           )}
         </div>

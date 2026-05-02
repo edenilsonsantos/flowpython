@@ -622,6 +622,212 @@ async function runWorkflow({
             if (error) await addLog(executionId, node.id, "error", error);
             if (tmpReqFile) { try { await fs.unlink(tmpReqFile); } catch {} }
           }
+        } else if (node.type === "switch") {
+          // ── Switch: multi-branch routing via Python expressions ──
+          const config = node.config as Record<string, unknown>;
+          const inputVar = (config.inputVar as string) ?? "";
+          const conditions = (config.conditions as Array<{ expression: string; label: string }>) ?? [];
+          const fallback = (config.fallback as string) ?? "default";
+          const rawValue = inputVar ? (pipelineContext[inputVar] ?? workflowContext[inputVar] ?? null) : null;
+          const valueJson = JSON.stringify(rawValue);
+          const condJson = JSON.stringify(conditions);
+
+          const script = `import json, sys\nvalue = json.loads(sys.argv[1])\nconditions = json.loads(sys.argv[2])\nfor c in conditions:\n    try:\n        ctx = {'value': value}\n        if isinstance(value, dict): ctx.update(value)\n        if eval(c['expression'], ctx):\n            print(c['label']); sys.exit(0)\n    except: pass\nprint('${fallback}')`;
+          const tmpScript = path.join(os.tmpdir(), `switch_${executionId}.py`);
+          await fs.writeFile(tmpScript, script, "utf8");
+          const switchResult = await new Promise<string>((resolve) => {
+            const proc = spawn("python3", [tmpScript, valueJson, condJson], { timeout: 10000 });
+            let out = ""; proc.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+            proc.on("close", () => resolve(out.trim() || fallback));
+            proc.on("error", () => resolve(fallback));
+          });
+          await fs.unlink(tmpScript).catch(() => {});
+          pipelineContext["_switch_result"] = switchResult;
+          output = `Branch: "${switchResult}" (input: ${valueJson})`;
+          success = true;
+          await addLog(executionId, node.id, "info", output);
+
+        } else if (node.type === "merge_lists") {
+          // ── Merge: combine multiple pipeline lists ───────────────
+          const config = node.config as Record<string, unknown>;
+          const vars = (config.vars as string[]) ?? [];
+          const outputVar = (config.outputVar as string) ?? "merged";
+          const mode = (config.mode as string) ?? "append";
+          const lists = vars.map(v => {
+            const val = pipelineContext[v] ?? workflowContext[v];
+            return Array.isArray(val) ? val : (val !== undefined ? [val] : []);
+          });
+          let merged: unknown;
+          if (mode === "append") {
+            merged = lists.flat();
+          } else if (mode === "zip") {
+            const maxLen = Math.max(0, ...lists.map(l => l.length));
+            merged = Array.from({ length: maxLen }, (_, i) =>
+              Object.assign({}, ...lists.map(l => (typeof l[i] === "object" && l[i] !== null ? l[i] : { value: l[i] })))
+            );
+          } else {
+            merged = Object.assign({}, ...lists.map(l => typeof l[0] === "object" ? l[0] : {}));
+          }
+          pipelineContext[outputVar] = merged;
+          output = `[merge:${mode}] ${vars.join(" + ")} → "${outputVar}" (${Array.isArray(merged) ? merged.length + " itens" : "objeto"})`;
+          success = true;
+          await addLog(executionId, node.id, "info", output);
+
+        } else if (node.type === "filter_list") {
+          // ── Filter: filter items by Python expression ────────────
+          const config = node.config as Record<string, unknown>;
+          const inputVar = (config.inputVar as string) ?? "items";
+          const outputVar = (config.outputVar as string) ?? "filtered";
+          const expression = (config.expression as string) ?? "True";
+          const items = pipelineContext[inputVar] ?? workflowContext[inputVar];
+          if (!Array.isArray(items)) throw new Error(`"${inputVar}" não é uma lista (${typeof items})`);
+          const itemsJson = JSON.stringify(items);
+          const script = `import json,sys\nitems=json.loads(sys.argv[1])\nresult=[item for item in items if (${expression})]\nprint(json.dumps(result))`;
+          const tmpScript = path.join(os.tmpdir(), `filter_${executionId}.py`);
+          await fs.writeFile(tmpScript, script, "utf8");
+          const filterResult = await new Promise<{ success: boolean; data: unknown; error: string | null }>((resolve) => {
+            const proc = spawn("python3", [tmpScript, itemsJson], { timeout: 30000 });
+            let out = ""; let err = "";
+            proc.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+            proc.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+            proc.on("close", (code) => {
+              try { resolve({ success: code === 0, data: JSON.parse(out), error: err || null }); }
+              catch { resolve({ success: false, data: [], error: err || "Parse error" }); }
+            });
+            proc.on("error", (e) => resolve({ success: false, data: [], error: e.message }));
+          });
+          await fs.unlink(tmpScript).catch(() => {});
+          if (filterResult.success) {
+            pipelineContext[outputVar] = filterResult.data;
+            const filtered = filterResult.data as unknown[];
+            output = `[filter] ${items.length} → ${filtered.length} itens → "${outputVar}"`;
+            success = true;
+            await addLog(executionId, node.id, "info", output);
+          } else {
+            success = false; error = filterResult.error;
+            await addLog(executionId, node.id, "error", error!);
+          }
+
+        } else if (node.type === "batch_split") {
+          // ── Split in Batches ─────────────────────────────────────
+          const config = node.config as Record<string, unknown>;
+          const inputVar = (config.inputVar as string) ?? "items";
+          const outputVar = (config.outputVar as string) ?? "batches";
+          const batchSize = Math.max(1, Number(config.batchSize ?? 10));
+          const items = pipelineContext[inputVar] ?? workflowContext[inputVar];
+          if (!Array.isArray(items)) throw new Error(`"${inputVar}" não é uma lista`);
+          const batches: unknown[][] = [];
+          for (let i = 0; i < items.length; i += batchSize) batches.push(items.slice(i, i + batchSize));
+          pipelineContext[outputVar] = batches;
+          output = `[batch] ${items.length} itens → ${batches.length} lotes de ≤${batchSize} → "${outputVar}"`;
+          success = true;
+          await addLog(executionId, node.id, "info", output);
+
+        } else if (node.type === "aggregate") {
+          // ── Aggregate: reduce list to single value ───────────────
+          const config = node.config as Record<string, unknown>;
+          const inputVar = (config.inputVar as string) ?? "items";
+          const outputVar = (config.outputVar as string) ?? "result";
+          const operation = (config.operation as string) ?? "count";
+          const field = (config.field as string) ?? "";
+          const separator = (config.separator as string) ?? ", ";
+          const items = pipelineContext[inputVar] ?? workflowContext[inputVar];
+          if (!Array.isArray(items)) throw new Error(`"${inputVar}" não é uma lista`);
+          const getField = (item: unknown) => field ? (item as Record<string, unknown>)?.[field] : item;
+          let result: unknown;
+          if (operation === "count") result = items.length;
+          else if (operation === "sum") result = items.reduce((acc, i) => acc + Number(getField(i) ?? 0), 0);
+          else if (operation === "avg") result = items.length ? items.reduce((acc, i) => acc + Number(getField(i) ?? 0), 0) / items.length : 0;
+          else if (operation === "min") result = items.reduce((acc, i) => Math.min(acc, Number(getField(i) ?? Infinity)), Infinity);
+          else if (operation === "max") result = items.reduce((acc, i) => Math.max(acc, Number(getField(i) ?? -Infinity)), -Infinity);
+          else if (operation === "first") result = items[0] ?? null;
+          else if (operation === "last") result = items[items.length - 1] ?? null;
+          else if (operation === "join") result = items.map(i => String(getField(i) ?? "")).join(separator);
+          else if (operation === "list") result = items.map(i => getField(i));
+          else result = items.length;
+          pipelineContext[outputVar] = result;
+          output = `[aggregate:${operation}${field ? `:${field}` : ""}] ${items.length} itens → ${JSON.stringify(result).slice(0, 60)} → "${outputVar}"`;
+          success = true;
+          await addLog(executionId, node.id, "info", output);
+
+        } else if (node.type === "split_out") {
+          // ── Split Out: explode list field into individual items ───
+          const config = node.config as Record<string, unknown>;
+          const inputVar = (config.inputVar as string) ?? "data";
+          const field = (config.field as string) ?? "items";
+          const outputVar = (config.outputVar as string) ?? "split";
+          const keepParent = config.keepParent === true;
+          const items = pipelineContext[inputVar] ?? workflowContext[inputVar];
+          const arr = Array.isArray(items) ? items : [items];
+          const split = arr.flatMap((item: unknown) => {
+            const fieldVal = (item as Record<string, unknown>)?.[field];
+            const nested = Array.isArray(fieldVal) ? fieldVal : [fieldVal];
+            return keepParent ? nested.map(n => ({ ...(item as object), [field]: n })) : nested;
+          });
+          pipelineContext[outputVar] = split;
+          output = `[split_out] ${arr.length} itens × campo "${field}" → ${split.length} itens → "${outputVar}"`;
+          success = true;
+          await addLog(executionId, node.id, "info", output);
+
+        } else if (node.type === "sort_list") {
+          // ── Sort ─────────────────────────────────────────────────
+          const config = node.config as Record<string, unknown>;
+          const inputVar = (config.inputVar as string) ?? "items";
+          const outputVar = (config.outputVar as string) ?? "sorted";
+          const key = (config.key as string) ?? "";
+          const order = (config.order as string) ?? "asc";
+          const items = pipelineContext[inputVar] ?? workflowContext[inputVar];
+          if (!Array.isArray(items)) throw new Error(`"${inputVar}" não é uma lista`);
+          const sorted = [...items].sort((a, b) => {
+            const av = key ? (a as Record<string, unknown>)?.[key] : a;
+            const bv = key ? (b as Record<string, unknown>)?.[key] : b;
+            const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+            return order === "desc" ? -cmp : cmp;
+          });
+          pipelineContext[outputVar] = sorted;
+          output = `[sort:${order}${key ? `:${key}` : ""}] ${items.length} itens → "${outputVar}"`;
+          success = true;
+          await addLog(executionId, node.id, "info", output);
+
+        } else if (node.type === "remove_duplicates") {
+          // ── Remove Duplicates ────────────────────────────────────
+          const config = node.config as Record<string, unknown>;
+          const inputVar = (config.inputVar as string) ?? "items";
+          const outputVar = (config.outputVar as string) ?? "unique";
+          const key = (config.key as string) ?? "";
+          const items = pipelineContext[inputVar] ?? workflowContext[inputVar];
+          if (!Array.isArray(items)) throw new Error(`"${inputVar}" não é uma lista`);
+          const seen = new Set<string>();
+          const unique = items.filter((item) => {
+            const k = key ? String((item as Record<string, unknown>)?.[key]) : JSON.stringify(item);
+            if (seen.has(k)) return false;
+            seen.add(k); return true;
+          });
+          pipelineContext[outputVar] = unique;
+          output = `[dedup:${key || "full"}] ${items.length} → ${unique.length} únicos → "${outputVar}"`;
+          success = true;
+          await addLog(executionId, node.id, "info", output);
+
+        } else if (node.type === "limit") {
+          // ── Limit ────────────────────────────────────────────────
+          const config = node.config as Record<string, unknown>;
+          const inputVar = (config.inputVar as string) ?? "items";
+          const outputVar = (config.outputVar as string) ?? "limited";
+          const maxItems = Math.max(1, Number(config.maxItems ?? 10));
+          const keep = (config.keep as string) ?? "first";
+          const items = pipelineContext[inputVar] ?? workflowContext[inputVar];
+          if (!Array.isArray(items)) throw new Error(`"${inputVar}" não é uma lista`);
+          let limited: unknown[];
+          if (keep === "last") limited = items.slice(-maxItems);
+          else if (keep === "random") {
+            const shuffled = [...items].sort(() => Math.random() - 0.5);
+            limited = shuffled.slice(0, maxItems);
+          } else limited = items.slice(0, maxItems);
+          pipelineContext[outputVar] = limited;
+          output = `[limit:${keep}] ${items.length} → ${limited.length} itens → "${outputVar}"`;
+          success = true;
+          await addLog(executionId, node.id, "info", output);
+
         } else if (node.type === "wait") {
           const config = node.config as Record<string, unknown>;
           const ms = Number(config.delayMs ?? 1000);
