@@ -32,7 +32,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   ArrowLeft, Play, Save, Settings, X, Trash2, AlertTriangle,
-  FlaskConical, Pin, PinOff, CheckCircle2, XCircle, Loader2,
+  FlaskConical, Pin, PinOff, CheckCircle2, XCircle, Loader2, Plus, Package,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
@@ -524,6 +524,10 @@ function NodeConfigPanel({
         <VariableNodeConfig cfg={cfg} type={type} onUpdateConfig={onUpdateConfig} />
       )}
 
+      {type === "pip_install" && (
+        <PipInstallConfig cfg={cfg} onUpdateConfig={onUpdateConfig} />
+      )}
+
       {/* ── Pin / Mock Data section ──────────────────────────────── */}
       {!isNote && (
         <div style={{ borderTop: "1px solid hsl(var(--border))", paddingTop: 14 }}>
@@ -639,6 +643,192 @@ function NodeConfigPanel({
             <Input type="number" min={100} value={(node.data.retryDelayMs as number) ?? 1000} onChange={(e) => onUpdateData("retryDelayMs", Number(e.target.value))} />
           </Field>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Pip Install Config ───────────────────────────────────────────────────────
+
+interface PipPackage { name: string; version: string; }
+
+function PipInstallConfig({
+  cfg,
+  onUpdateConfig,
+}: {
+  cfg: Record<string, unknown>;
+  onUpdateConfig: (k: string, v: unknown) => void;
+}) {
+  const action = (cfg.action as string) ?? "install";
+  const mode = (cfg.mode as string) ?? "single";
+  const packages = (cfg.packages as PipPackage[]) ?? [];
+
+  const updatePackage = (idx: number, field: "name" | "version", val: string) => {
+    const next = packages.map((p, i) => i === idx ? { ...p, [field]: val } : p);
+    onUpdateConfig("packages", next);
+  };
+  const addPackage = () => onUpdateConfig("packages", [...packages, { name: "", version: "" }]);
+  const removePackage = (idx: number) => onUpdateConfig("packages", packages.filter((_, i) => i !== idx));
+
+  const MODES = [
+    { value: "single",       label: "Lib única",       desc: "Uma biblioteca com nome e versão" },
+    { value: "multiple",     label: "Múltiplas libs",  desc: "Lista de bibliotecas com versões exatas" },
+    { value: "requirements", label: "requirements.txt", desc: "Cole o conteúdo do arquivo diretamente" },
+  ] as const;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+      {/* Action toggle */}
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 500, color: "hsl(var(--foreground))", display: "block", marginBottom: 6 }}>
+          Ação
+        </label>
+        <div style={{ display: "flex", gap: 6 }}>
+          {(["install", "uninstall"] as const).map((a) => (
+            <button
+              key={a}
+              onClick={() => onUpdateConfig("action", a)}
+              style={{
+                flex: 1, padding: "8px 0", borderRadius: 8, border: "1.5px solid",
+                borderColor: action === a ? (a === "uninstall" ? "#ef4444" : "#34d399") : "hsl(var(--border))",
+                background: action === a ? (a === "uninstall" ? "rgba(239,68,68,0.1)" : "rgba(52,211,153,0.1)") : "transparent",
+                color: action === a ? (a === "uninstall" ? "#ef4444" : "#34d399") : "hsl(var(--muted-foreground))",
+                fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em",
+                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              }}
+            >
+              <Package size={13} />
+              {a === "install" ? "Instalar" : "Remover"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Mode selector */}
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 500, color: "hsl(var(--foreground))", display: "block", marginBottom: 6 }}>
+          Modo
+        </label>
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          {MODES.filter((m) => !(action === "uninstall" && m.value === "requirements")).map((m) => (
+            <button
+              key={m.value}
+              onClick={() => onUpdateConfig("mode", m.value)}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "8px 11px",
+                borderRadius: 7, border: `1.5px solid ${mode === m.value ? "#f472b6" : "hsl(var(--border))"}`,
+                background: mode === m.value ? "rgba(244,114,182,0.08)" : "transparent",
+                cursor: "pointer", textAlign: "left", width: "100%",
+              }}
+            >
+              <div style={{
+                width: 9, height: 9, borderRadius: "50%", flexShrink: 0,
+                background: mode === m.value ? "#f472b6" : "hsl(var(--muted-foreground))",
+              }} />
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: mode === m.value ? "#f472b6" : "hsl(var(--foreground))" }}>
+                  {m.label}
+                </div>
+                <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 1 }}>{m.desc}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Single mode */}
+      {mode === "single" && <>
+        <Field label="Nome exato da biblioteca">
+          <Input
+            value={(cfg.packageName as string) ?? ""}
+            onChange={(e) => onUpdateConfig("packageName", e.target.value)}
+            placeholder="requests"
+            style={{ fontFamily: "monospace" }}
+          />
+        </Field>
+        <Field label={`Versão exata ${action === "uninstall" ? "(ignorada ao remover)" : "(opcional)"}`}>
+          <Input
+            value={(cfg.packageVersion as string) ?? ""}
+            onChange={(e) => onUpdateConfig("packageVersion", e.target.value)}
+            placeholder="2.31.0"
+            disabled={action === "uninstall"}
+            style={{ fontFamily: "monospace", opacity: action === "uninstall" ? 0.4 : 1 }}
+          />
+        </Field>
+      </>}
+
+      {/* Multiple mode */}
+      {mode === "multiple" && (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <label style={{ fontSize: 12, fontWeight: 500, color: "hsl(var(--foreground))" }}>
+              Bibliotecas ({packages.length})
+            </label>
+            <Button size="sm" variant="outline" onClick={addPackage} style={{ height: 26, fontSize: 11, padding: "0 10px" }}>
+              <Plus size={11} className="mr-1" /> Adicionar
+            </Button>
+          </div>
+
+          {packages.length === 0 && (
+            <div style={{
+              padding: "12px", borderRadius: 7, border: "1px dashed hsl(var(--border))",
+              textAlign: "center", fontSize: 12, color: "hsl(var(--muted-foreground))",
+            }}>
+              Clique em Adicionar para incluir bibliotecas
+            </div>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {packages.map((pkg, idx) => (
+              <div key={idx} style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                <Input
+                  value={pkg.name}
+                  onChange={(e) => updatePackage(idx, "name", e.target.value)}
+                  placeholder="numpy"
+                  style={{ fontFamily: "monospace", fontSize: 12, flex: 2 }}
+                />
+                <Input
+                  value={pkg.version}
+                  onChange={(e) => updatePackage(idx, "version", e.target.value)}
+                  placeholder="1.26.0"
+                  disabled={action === "uninstall"}
+                  style={{ fontFamily: "monospace", fontSize: 12, flex: 1, opacity: action === "uninstall" ? 0.4 : 1 }}
+                />
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => removePackage(idx)}
+                  style={{ width: 28, height: 28, flexShrink: 0 }}
+                >
+                  <Trash2 size={12} className="text-destructive" />
+                </Button>
+              </div>
+            ))}
+          </div>
+
+          {packages.length > 0 && (
+            <div style={{ marginTop: 6, padding: "7px 10px", borderRadius: 6, background: "rgba(244,114,182,0.06)", border: "1px solid rgba(244,114,182,0.2)", fontSize: 11, fontFamily: "monospace", color: "hsl(var(--muted-foreground))" }}>
+              pip {action} {packages.map((p) => action === "uninstall" ? p.name : (p.version ? `${p.name}==${p.version}` : p.name)).filter(Boolean).join(" ")}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Requirements.txt mode */}
+      {mode === "requirements" && (
+        <Field label="Conteúdo do requirements.txt">
+          <Textarea
+            value={(cfg.requirementsTxt as string) ?? ""}
+            onChange={(e) => onUpdateConfig("requirementsTxt", e.target.value)}
+            placeholder={"requests==2.31.0\nnumpy>=1.26.0\npandas\nfastapi==0.104.1"}
+            rows={8}
+            style={{ fontFamily: "monospace", fontSize: 12, lineHeight: 1.6 }}
+          />
+          <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 4 }}>
+            Suporta todos os formatos de pinning do pip: <code>==</code>, <code>&gt;=</code>, <code>~=</code>, etc.
+          </div>
+        </Field>
       )}
     </div>
   );

@@ -196,6 +196,24 @@ export const NODE_DEFINITIONS: NodeDef[] = [
 
   // ── Utility ───────────────────────────────────────────────────
   {
+    type: "pip_install",
+    label: "Pip Packages",
+    description: "Instala ou remove bibliotecas Python",
+    category: "utility",
+    iconName: "Package",
+    color: "#f472b6",
+    defaultConfig: {
+      action: "install",
+      mode: "single",
+      packageName: "",
+      packageVersion: "",
+      packages: [],
+      requirementsTxt: "",
+    },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
     type: "note",
     label: "Note",
     description: "Comentário no canvas",

@@ -2,14 +2,14 @@ import { memo } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
 import {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
-  Variable, Database, Shuffle, Globe, Timer, StickyNote, Pin, Braces, Syringe,
+  Variable, Database, Shuffle, Globe, Timer, StickyNote, Pin, Braces, Syringe, Package,
   LucideProps,
 } from "lucide-react";
 import { getNodeDef, NODE_CATEGORY_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
 
 const ICON_MAP: Record<string, React.FC<LucideProps>> = {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
-  Variable, Database, Shuffle, Globe, Timer, StickyNote, Braces, Syringe,
+  Variable, Database, Shuffle, Globe, Timer, StickyNote, Braces, Syringe, Package,
 };
 
 export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) => {
@@ -29,6 +29,13 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
   const scope = cfg.scope as string | undefined;
   const scopeMeta = scope ? VARIABLE_SCOPES.find((s) => s.value === scope) : null;
   const operation = cfg.operation as string | undefined;
+
+  const isPip = data.type === "pip_install";
+  const pipAction = cfg.action as string | undefined;
+  const pipMode = cfg.mode as string | undefined;
+  const pipPkgCount = pipMode === "multiple"
+    ? ((cfg.packages as unknown[]) ?? []).length
+    : pipMode === "single" ? (cfg.packageName ? 1 : 0) : null;
 
   return (
     <div
@@ -137,6 +144,28 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
               {cfg.key as string}
             </span>
           )}
+        </div>
+      )}
+
+      {/* Pip install badges */}
+      {isPip && (
+        <div style={{ padding: "5px 10px 6px", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+          <span style={{
+            fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase",
+            color: pipAction === "uninstall" ? "#ef4444" : "#34d399",
+            background: pipAction === "uninstall" ? "rgba(239,68,68,0.12)" : "rgba(52,211,153,0.12)",
+            border: `1px solid ${pipAction === "uninstall" ? "rgba(239,68,68,0.3)" : "rgba(52,211,153,0.3)"}`,
+            borderRadius: 4, padding: "2px 6px",
+          }}>
+            {pipAction === "uninstall" ? "uninstall" : "install"}
+          </span>
+          <span style={{
+            fontSize: 9, fontWeight: 600, color: "#f472b6",
+            background: "rgba(244,114,182,0.1)", border: "1px solid rgba(244,114,182,0.25)",
+            borderRadius: 4, padding: "2px 6px",
+          }}>
+            {pipMode === "requirements" ? "req.txt" : pipMode === "multiple" ? `${pipPkgCount} pkg${pipPkgCount !== 1 ? "s" : ""}` : (cfg.packageName as string || "single")}
+          </span>
         </div>
       )}
 

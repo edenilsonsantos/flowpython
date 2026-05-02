@@ -2,13 +2,13 @@ import { useState } from "react";
 import {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
   Variable, Database, Shuffle, Globe, Timer, StickyNote,
-  ChevronDown, ChevronRight, Braces, Syringe, LucideProps,
+  ChevronDown, ChevronRight, Braces, Syringe, Package, LucideProps,
 } from "lucide-react";
 import { NODE_DEFINITIONS, NODE_CATEGORY_META, NodeCategory, NodeDef } from "@/lib/node-definitions";
 
 const ICON_MAP: Record<string, React.FC<LucideProps>> = {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
-  Variable, Database, Shuffle, Globe, Timer, StickyNote, Braces, Syringe,
+  Variable, Database, Shuffle, Globe, Timer, StickyNote, Braces, Syringe, Package,
 };
 
 const CATEGORY_ORDER: NodeCategory[] = ["trigger", "logic", "variables", "data", "integration", "utility"];

@@ -538,6 +538,90 @@ async function runWorkflow({
           output = `Set variable ${config.key ?? "?"} = ${config.value ?? ""}`;
           success = true;
           await addLog(executionId, node.id, "info", output);
+        } else if (node.type === "pip_install") {
+          const config = node.config as Record<string, unknown>;
+          const action = (config.action as string) ?? "install";
+          const mode = (config.mode as string) ?? "single";
+          const venvDir = path.join(venovsDir, workflowId);
+          const venvPip = path.join(venvDir, "bin", "pip");
+
+          // Ensure venv exists when installing
+          if (action === "install") {
+            try {
+              await fs.access(path.join(venvDir, "bin", "pip"));
+            } catch {
+              await addLog(executionId, node.id, "info", "Criando ambiente virtual Python...");
+              await new Promise<void>((resolve, reject) => {
+                const proc = spawn("python3", ["-m", "venv", venvDir], { timeout: 60000 });
+                proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`venv exit ${code}`))));
+                proc.on("error", reject);
+              });
+            }
+          }
+
+          let pipBin = "pip3";
+          try { await fs.access(venvPip); pipBin = venvPip; } catch {}
+
+          // Build pip args
+          let pipArgs: string[] = [];
+          let tmpReqFile: string | null = null;
+
+          if (action === "install") {
+            if (mode === "single") {
+              const name = ((config.packageName as string) ?? "").trim();
+              const ver = ((config.packageVersion as string) ?? "").trim();
+              if (!name) { success = false; error = "Nome da biblioteca é obrigatório"; await addLog(executionId, node.id, "error", error); }
+              else { pipArgs = ["install", ver ? `${name}==${ver}` : name]; }
+            } else if (mode === "multiple") {
+              const pkgs = (config.packages as Array<{ name: string; version: string }>) ?? [];
+              const specs = pkgs.map((p) => (p.version ? `${p.name}==${p.version}` : p.name)).filter(Boolean);
+              if (!specs.length) { success = false; error = "Nenhuma biblioteca especificada"; await addLog(executionId, node.id, "error", error); }
+              else { pipArgs = ["install", ...specs]; }
+            } else if (mode === "requirements") {
+              const txt = ((config.requirementsTxt as string) ?? "").trim();
+              if (!txt) { success = false; error = "Conteúdo do requirements.txt está vazio"; await addLog(executionId, node.id, "error", error); }
+              else {
+                tmpReqFile = path.join(os.tmpdir(), `req_${executionId}_${node.id}.txt`);
+                await fs.writeFile(tmpReqFile, txt, "utf8");
+                pipArgs = ["install", "-r", tmpReqFile];
+              }
+            }
+          } else {
+            // uninstall — requirements mode not supported for uninstall
+            if (mode === "single") {
+              const name = ((config.packageName as string) ?? "").trim();
+              if (!name) { success = false; error = "Nome da biblioteca é obrigatório"; await addLog(executionId, node.id, "error", error); }
+              else { pipArgs = ["uninstall", "-y", name]; }
+            } else if (mode === "multiple") {
+              const pkgs = (config.packages as Array<{ name: string; version: string }>) ?? [];
+              const names = pkgs.map((p) => p.name).filter(Boolean);
+              if (!names.length) { success = false; error = "Nenhuma biblioteca especificada"; await addLog(executionId, node.id, "error", error); }
+              else { pipArgs = ["uninstall", "-y", ...names]; }
+            }
+          }
+
+          if (pipArgs.length > 0) {
+            await addLog(executionId, node.id, "info", `Executando: pip ${pipArgs.join(" ")}`);
+            const result = await new Promise<{ success: boolean; output: string; error: string | null }>((resolve) => {
+              const proc = spawn(pipBin, pipArgs, { timeout: 120000 });
+              let stdout = ""; let stderr = "";
+              proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+              proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+              proc.on("close", (code) => {
+                const combinedOut = (stdout + "\n" + stderr).trim();
+                resolve(code === 0
+                  ? { success: true, output: combinedOut, error: null }
+                  : { success: false, output: stdout.trim(), error: stderr.trim() || `pip exit ${code}` });
+              });
+              proc.on("error", (err) => resolve({ success: false, output: "", error: err.message }));
+            });
+            success = result.success;
+            output = result.output;
+            error = result.error;
+            if (output) await addLog(executionId, node.id, "info", output);
+            if (error) await addLog(executionId, node.id, "error", error);
+            if (tmpReqFile) { try { await fs.unlink(tmpReqFile); } catch {} }
+          }
         } else if (node.type === "wait") {
           const config = node.config as Record<string, unknown>;
           const ms = Number(config.delayMs ?? 1000);
