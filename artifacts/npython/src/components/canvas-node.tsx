@@ -2,14 +2,14 @@ import { memo } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
 import {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
-  Variable, Database, Shuffle, Globe, Timer, StickyNote, Pin,
+  Variable, Database, Shuffle, Globe, Timer, StickyNote, Pin, Braces, Syringe,
   LucideProps,
 } from "lucide-react";
-import { getNodeDef, NODE_CATEGORY_META } from "@/lib/node-definitions";
+import { getNodeDef, NODE_CATEGORY_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
 
 const ICON_MAP: Record<string, React.FC<LucideProps>> = {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
-  Variable, Database, Shuffle, Globe, Timer, StickyNote,
+  Variable, Database, Shuffle, Globe, Timer, StickyNote, Braces, Syringe,
 };
 
 export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) => {
@@ -22,6 +22,13 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
   const hasOutput = def?.hasOutput ?? true;
   const isNote = data.type === "note";
   const isPinned = !!(data.config as Record<string, unknown>)?.pinned;
+
+  // For variable nodes: show scope badge
+  const cfg = (data.config as Record<string, unknown>) ?? {};
+  const isVariable = data.type === "variable" || data.type === "variable_inject";
+  const scope = cfg.scope as string | undefined;
+  const scopeMeta = scope ? VARIABLE_SCOPES.find((s) => s.value === scope) : null;
+  const operation = cfg.operation as string | undefined;
 
   return (
     <div
@@ -43,18 +50,10 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
         <div
           title="Dados mockados (pinned)"
           style={{
-            position: "absolute",
-            top: -8,
-            right: -8,
-            width: 18,
-            height: 18,
-            borderRadius: "50%",
-            background: "#f59e0b",
-            border: "2px solid hsl(var(--background))",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 5,
+            position: "absolute", top: -8, right: -8,
+            width: 18, height: 18, borderRadius: "50%",
+            background: "#f59e0b", border: "2px solid hsl(var(--background))",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 5,
           }}
         >
           <Pin size={9} color="white" strokeWidth={3} />
@@ -66,16 +65,11 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
           type="target"
           position={Position.Left}
           isConnectable={isConnectable}
-          style={{
-            background: color,
-            border: "2px solid hsl(var(--background))",
-            width: 12,
-            height: 12,
-            left: -7,
-          }}
+          style={{ background: color, border: "2px solid hsl(var(--background))", width: 12, height: 12, left: -7 }}
         />
       )}
 
+      {/* Header */}
       <div
         style={{
           background: bg,
@@ -84,35 +78,20 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
           display: "flex",
           alignItems: "center",
           gap: 8,
-          borderBottom: isNote ? "none" : "1px solid rgba(255,255,255,0.06)",
+          borderBottom: (isNote && !isVariable) ? "none" : "1px solid rgba(255,255,255,0.06)",
         }}
       >
         <div
           style={{
-            background: `${color}22`,
-            border: `1px solid ${color}55`,
-            borderRadius: 6,
-            width: 28,
-            height: 28,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
+            background: `${color}22`, border: `1px solid ${color}55`,
+            borderRadius: 6, width: 28, height: 28,
+            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
           }}
         >
           <IconComponent size={14} color={color} strokeWidth={2} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: "hsl(var(--foreground))",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
+          <div style={{ fontSize: 12, fontWeight: 600, color: "hsl(var(--foreground))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {data.label as string}
           </div>
           <div style={{ fontSize: 10, color: color, fontWeight: 500, marginTop: 1 }}>
@@ -121,19 +100,50 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
         </div>
       </div>
 
-      {isNote && data.config && (data.config as Record<string, string>).text && (
+      {/* Variable node: show scope + operation pill */}
+      {isVariable && (
         <div
           style={{
-            padding: "8px 10px",
-            fontSize: 11,
-            color: "hsl(var(--muted-foreground))",
-            fontStyle: "italic",
-            whiteSpace: "pre-wrap",
-            maxHeight: 80,
-            overflow: "hidden",
+            padding: "5px 10px 6px",
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
           }}
         >
-          {(data.config as Record<string, string>).text}
+          {operation && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+              textTransform: "uppercase", color: operation === "set" ? "#f59e0b" : "#60a5fa",
+              background: operation === "set" ? "rgba(245,158,11,0.12)" : "rgba(96,165,250,0.12)",
+              border: `1px solid ${operation === "set" ? "rgba(245,158,11,0.3)" : "rgba(96,165,250,0.3)"}`,
+              borderRadius: 4, padding: "2px 6px",
+            }}>
+              {operation}
+            </span>
+          )}
+          {scopeMeta && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+              textTransform: "uppercase", color: scopeMeta.color,
+              background: `${scopeMeta.color}14`,
+              border: `1px solid ${scopeMeta.color}33`,
+              borderRadius: 4, padding: "2px 6px",
+            }}>
+              {scopeMeta.label}
+            </span>
+          )}
+          {cfg.key && (
+            <span style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 80 }}>
+              {cfg.key as string}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Note text */}
+      {isNote && cfg.text && (
+        <div style={{ padding: "8px 10px", fontSize: 11, color: "hsl(var(--muted-foreground))", fontStyle: "italic", whiteSpace: "pre-wrap", maxHeight: 80, overflow: "hidden" }}>
+          {cfg.text as string}
         </div>
       )}
 
@@ -142,13 +152,7 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
           type="source"
           position={Position.Right}
           isConnectable={isConnectable}
-          style={{
-            background: color,
-            border: "2px solid hsl(var(--background))",
-            width: 12,
-            height: 12,
-            right: -7,
-          }}
+          style={{ background: color, border: "2px solid hsl(var(--background))", width: 12, height: 12, right: -7 }}
         />
       )}
     </div>

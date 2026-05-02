@@ -1,4 +1,4 @@
-export type NodeCategory = "trigger" | "logic" | "data" | "integration" | "utility";
+export type NodeCategory = "trigger" | "logic" | "variables" | "data" | "integration" | "utility";
 
 export interface NodeDef {
   type: string;
@@ -13,11 +13,12 @@ export interface NodeDef {
 }
 
 export const NODE_CATEGORY_META: Record<NodeCategory, { label: string; color: string; bg: string }> = {
-  trigger:     { label: "Trigger",     color: "#14b8a6", bg: "rgba(20,184,166,0.12)" },
-  logic:       { label: "Logic",       color: "#a78bfa", bg: "rgba(167,139,250,0.12)" },
-  data:        { label: "Data",        color: "#fbbf24", bg: "rgba(251,191,36,0.12)" },
-  integration: { label: "Integration", color: "#60a5fa", bg: "rgba(96,165,250,0.12)" },
-  utility:     { label: "Utility",     color: "#94a3b8", bg: "rgba(148,163,184,0.12)" },
+  trigger:   { label: "Trigger",   color: "#14b8a6", bg: "rgba(20,184,166,0.12)" },
+  logic:     { label: "Logic",     color: "#a78bfa", bg: "rgba(167,139,250,0.12)" },
+  variables: { label: "Variables", color: "#34d399", bg: "rgba(52,211,153,0.12)"  },
+  data:      { label: "Data",      color: "#fbbf24", bg: "rgba(251,191,36,0.12)"  },
+  integration:{ label: "Integration", color: "#60a5fa", bg: "rgba(96,165,250,0.12)" },
+  utility:   { label: "Utility",   color: "#94a3b8", bg: "rgba(148,163,184,0.12)" },
 };
 
 export const NODE_DEFINITIONS: NodeDef[] = [
@@ -102,11 +103,43 @@ export const NODE_DEFINITIONS: NodeDef[] = [
     hasOutput: true,
   },
 
+  // ── Variables ─────────────────────────────────────────────────
+  {
+    type: "variable",
+    label: "Variable",
+    description: "Lê ou define uma variável com escopo",
+    category: "variables",
+    iconName: "Braces",
+    color: "#34d399",
+    defaultConfig: {
+      operation: "get",
+      key: "",
+      value: "",
+      scope: "workflow",
+    },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
+    type: "variable_inject",
+    label: "Inject Variables",
+    description: "Injeta variáveis no código Python",
+    category: "variables",
+    iconName: "Syringe",
+    color: "#34d399",
+    defaultConfig: {
+      scope: "workflow",
+      keys: [],
+    },
+    hasInput: true,
+    hasOutput: true,
+  },
+
   // ── Data ──────────────────────────────────────────────────────
   {
     type: "set_variable",
     label: "Set Variable",
-    description: "Define uma variável de workflow",
+    description: "Define uma variável (legado)",
     category: "data",
     iconName: "Variable",
     color: "#fbbf24",
@@ -117,7 +150,7 @@ export const NODE_DEFINITIONS: NodeDef[] = [
   {
     type: "get_variable",
     label: "Get Variable",
-    description: "Lê uma variável de workflow",
+    description: "Lê uma variável (legado)",
     category: "data",
     iconName: "Database",
     color: "#fbbf24",
@@ -182,3 +215,26 @@ export function getNodeDef(type: string): NodeDef | undefined {
 export function isTriggerType(type: string): boolean {
   return type.startsWith("trigger_");
 }
+
+export const VARIABLE_SCOPES = [
+  {
+    value: "global",
+    label: "Global",
+    color: "#f59e0b",
+    description: "Persistida no banco — compartilhada entre todos os workflows e execuções",
+  },
+  {
+    value: "workflow",
+    label: "Workflow",
+    color: "#60a5fa",
+    description: "Vive durante toda a execução do workflow — acessível por qualquer nodo",
+  },
+  {
+    value: "node",
+    label: "Node",
+    color: "#34d399",
+    description: "Flui pelo pipeline — disponível apenas nos nodos downstream do ponto de definição",
+  },
+] as const;
+
+export type VariableScope = "global" | "workflow" | "node";

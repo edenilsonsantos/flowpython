@@ -2,23 +2,25 @@ import { useState } from "react";
 import {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
   Variable, Database, Shuffle, Globe, Timer, StickyNote,
-  ChevronDown, ChevronRight, LucideProps,
+  ChevronDown, ChevronRight, Braces, Syringe, LucideProps,
 } from "lucide-react";
 import { NODE_DEFINITIONS, NODE_CATEGORY_META, NodeCategory, NodeDef } from "@/lib/node-definitions";
 
 const ICON_MAP: Record<string, React.FC<LucideProps>> = {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
-  Variable, Database, Shuffle, Globe, Timer, StickyNote,
+  Variable, Database, Shuffle, Globe, Timer, StickyNote, Braces, Syringe,
 };
 
-const CATEGORY_ORDER: NodeCategory[] = ["trigger", "logic", "data", "integration", "utility"];
+const CATEGORY_ORDER: NodeCategory[] = ["trigger", "logic", "variables", "data", "integration", "utility"];
 
 interface NodePaletteProps {
   onAddNode: (def: NodeDef) => void;
 }
 
 export function NodePalette({ onAddNode }: NodePaletteProps) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({
+    data: true,   // collapse legacy data by default
+  });
 
   const toggle = (cat: string) =>
     setCollapsed((prev) => ({ ...prev, [cat]: !prev[cat] }));
@@ -93,6 +95,11 @@ export function NodePalette({ onAddNode }: NodePaletteProps) {
                 }}
               />
               {meta.label}
+              {cat === "data" && (
+                <span style={{ fontSize: 9, color: "hsl(var(--muted-foreground))", marginLeft: "auto", fontWeight: 400 }}>
+                  legado
+                </span>
+              )}
             </button>
 
             {isOpen && (

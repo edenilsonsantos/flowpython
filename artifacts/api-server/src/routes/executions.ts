@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, workflowsTable, nodesTable, edgesTable, executionsTable, logLinesTable } from "@workspace/db";
+import { db, workflowsTable, nodesTable, edgesTable, executionsTable, logLinesTable, variablesTable } from "@workspace/db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { generateId } from "../lib/id";
 import { spawn, type ChildProcess } from "child_process";
@@ -376,6 +376,12 @@ async function runWorkflow({
 
     let globalError = false;
 
+    // ── Scoped variable stores ─────────────────────────────────────
+    // workflow: persists for entire execution, all nodes can access
+    const workflowContext: Record<string, unknown> = {};
+    // pipeline: accumulated as nodes execute; downstream nodes see upstream sets
+    const pipelineContext: Record<string, unknown> = {};
+
     const venovsDir = process.env.NPYTHON_VENVS_DIR ?? "/tmp/npython-venvs";
 
     for (const node of sorted) {
@@ -456,6 +462,77 @@ async function runWorkflow({
 
           if (output) await addLog(executionId, node.id, "info", output.trim());
           if (error) await addLog(executionId, node.id, "error", error.trim());
+        } else if (node.type === "variable") {
+          const config = node.config as Record<string, unknown>;
+          const operation = (config.operation as string) ?? "get";
+          const key = (config.key as string) ?? "";
+          const scope = (config.scope as string) ?? "workflow";
+          const setValue = String(config.value ?? "");
+
+          if (!key) {
+            success = false;
+            error = "Variable key is required";
+            await addLog(executionId, node.id, "error", error);
+          } else if (scope === "global") {
+            if (operation === "set") {
+              const existing = await db.select().from(variablesTable).where(eq(variablesTable.key, key)).limit(1);
+              if (existing.length > 0) {
+                await db.update(variablesTable).set({ value: setValue, updatedAt: new Date() }).where(eq(variablesTable.key, key));
+              } else {
+                await db.insert(variablesTable).values({ id: generateId(), key, value: setValue, type: "string" });
+              }
+              output = `[global] Set "${key}" = ${JSON.stringify(setValue)}`;
+            } else {
+              const [v] = await db.select().from(variablesTable).where(eq(variablesTable.key, key)).limit(1);
+              output = v
+                ? `[global] "${key}" = ${JSON.stringify(v.value)}`
+                : `[global] "${key}" não encontrada`;
+            }
+            success = true;
+            await addLog(executionId, node.id, "info", output);
+          } else if (scope === "workflow") {
+            if (operation === "set") {
+              workflowContext[key] = setValue;
+              output = `[workflow] Set "${key}" = ${JSON.stringify(setValue)}`;
+            } else {
+              const val = workflowContext[key];
+              output = `[workflow] Get "${key}" = ${JSON.stringify(val ?? null)}`;
+            }
+            success = true;
+            await addLog(executionId, node.id, "info", output);
+          } else {
+            // node scope — flows downstream in pipeline
+            if (operation === "set") {
+              pipelineContext[key] = setValue;
+              output = `[node] Set "${key}" = ${JSON.stringify(setValue)} (disponível downstream)`;
+            } else {
+              const val = pipelineContext[key];
+              output = `[node] Get "${key}" = ${JSON.stringify(val ?? null)}`;
+            }
+            success = true;
+            await addLog(executionId, node.id, "info", output);
+          }
+        } else if (node.type === "variable_inject") {
+          const config = node.config as Record<string, unknown>;
+          const scope = (config.scope as string) ?? "workflow";
+          const keys = (config.keys as string[]) ?? [];
+
+          let ctx: Record<string, unknown> = {};
+          if (scope === "global") {
+            const vars = await db.select().from(variablesTable);
+            ctx = Object.fromEntries(vars.map((v) => [v.key, v.value]));
+          } else if (scope === "workflow") {
+            ctx = { ...workflowContext };
+          } else {
+            ctx = { ...pipelineContext };
+          }
+
+          const filtered = keys.length > 0 ? Object.fromEntries(keys.map((k) => [k, ctx[k] ?? null])) : ctx;
+          output = `[inject:${scope}] Injetado: ${Object.keys(filtered).join(", ") || "(vazio)"}`;
+          // Make injected vars available in pipeline
+          Object.assign(pipelineContext, filtered);
+          success = true;
+          await addLog(executionId, node.id, "info", output);
         } else if (node.type === "set_variable") {
           const config = node.config as Record<string, string>;
           output = `Set variable ${config.key ?? "?"} = ${config.value ?? ""}`;

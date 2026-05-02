@@ -42,7 +42,10 @@ import { python } from "@codemirror/lang-python";
 import { CanvasNode } from "@/components/canvas-node";
 import { EdgeWithDelete } from "@/components/edge-with-delete";
 import { NodePalette } from "@/components/node-palette";
-import { NodeDef, getNodeDef, isTriggerType } from "@/lib/node-definitions";
+import { NodeDef, getNodeDef, isTriggerType, VARIABLE_SCOPES } from "@/lib/node-definitions";
+import {
+  useListVariables,
+} from "@workspace/api-client-react";
 
 const nodeTypes = { custom: CanvasNode };
 const edgeTypes = { custom: EdgeWithDelete };
@@ -517,6 +520,10 @@ function NodeConfigPanel({
         <Field label="Texto"><Textarea value={(cfg.text as string) ?? ""} onChange={(e) => onUpdateConfig("text", e.target.value)} rows={4} /></Field>
       )}
 
+      {(type === "variable" || type === "variable_inject") && (
+        <VariableNodeConfig cfg={cfg} type={type} onUpdateConfig={onUpdateConfig} />
+      )}
+
       {/* ── Pin / Mock Data section ──────────────────────────────── */}
       {!isNote && (
         <div style={{ borderTop: "1px solid hsl(var(--border))", paddingTop: 14 }}>
@@ -632,6 +639,151 @@ function NodeConfigPanel({
             <Input type="number" min={100} value={(node.data.retryDelayMs as number) ?? 1000} onChange={(e) => onUpdateData("retryDelayMs", Number(e.target.value))} />
           </Field>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Variable Node Config ─────────────────────────────────────────────────────
+
+function VariableNodeConfig({
+  cfg,
+  type,
+  onUpdateConfig,
+}: {
+  cfg: Record<string, unknown>;
+  type: string;
+  onUpdateConfig: (k: string, v: unknown) => void;
+}) {
+  const { data: variablesData } = useListVariables({});
+  const globalVars = variablesData ?? [];
+
+  const scope = (cfg.scope as string) ?? "workflow";
+  const operation = (cfg.operation as string) ?? "get";
+  const isInject = type === "variable_inject";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Scope selector */}
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 500, color: "hsl(var(--foreground))", display: "block", marginBottom: 8 }}>
+          Escopo
+        </label>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {VARIABLE_SCOPES.map((s) => (
+            <button
+              key={s.value}
+              onClick={() => onUpdateConfig("scope", s.value)}
+              style={{
+                display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 11px",
+                borderRadius: 8, border: `1.5px solid ${scope === s.value ? s.color : "hsl(var(--border))"}`,
+                background: scope === s.value ? `${s.color}10` : "transparent",
+                cursor: "pointer", textAlign: "left", transition: "border-color 0.12s, background 0.12s",
+                width: "100%",
+              }}
+            >
+              <div style={{
+                width: 10, height: 10, borderRadius: "50%", background: s.color,
+                flexShrink: 0, marginTop: 3, boxShadow: scope === s.value ? `0 0 6px ${s.color}` : "none",
+              }} />
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: scope === s.value ? s.color : "hsl(var(--foreground))" }}>
+                  {s.label}
+                </div>
+                <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", lineHeight: 1.5, marginTop: 1 }}>
+                  {s.description}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {!isInject && (
+        <>
+          {/* Operation toggle */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 500, color: "hsl(var(--foreground))", display: "block", marginBottom: 6 }}>
+              Operação
+            </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              {(["get", "set"] as const).map((op) => (
+                <button
+                  key={op}
+                  onClick={() => onUpdateConfig("operation", op)}
+                  style={{
+                    flex: 1, padding: "7px 0", borderRadius: 7, border: `1.5px solid`,
+                    borderColor: operation === op ? (op === "set" ? "#f59e0b" : "#60a5fa") : "hsl(var(--border))",
+                    background: operation === op ? (op === "set" ? "rgba(245,158,11,0.1)" : "rgba(96,165,250,0.1)") : "transparent",
+                    color: operation === op ? (op === "set" ? "#f59e0b" : "#60a5fa") : "hsl(var(--muted-foreground))",
+                    fontWeight: 600, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em",
+                    cursor: "pointer", transition: "all 0.12s",
+                  }}
+                >
+                  {op === "get" ? "Ler" : "Definir"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Key input — with suggestions for global scope */}
+          <Field label="Chave (nome da variável)">
+            {scope === "global" && globalVars.length > 0 ? (
+              <Select value={(cfg.key as string) ?? ""} onValueChange={(v) => onUpdateConfig("key", v)}>
+                <SelectTrigger><SelectValue placeholder="Selecionar variável global..." /></SelectTrigger>
+                <SelectContent>
+                  {globalVars.map((v: any) => (
+                    <SelectItem key={v.id} value={v.key}>
+                      <span style={{ fontFamily: "monospace" }}>{v.key}</span>
+                      {v.value && <span style={{ color: "hsl(var(--muted-foreground))", marginLeft: 8, fontSize: 11 }}>= {String(v.value).slice(0, 20)}</span>}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                value={(cfg.key as string) ?? ""}
+                onChange={(e) => onUpdateConfig("key", e.target.value)}
+                placeholder="NOME_DA_VARIAVEL"
+                style={{ fontFamily: "monospace" }}
+              />
+            )}
+          </Field>
+
+          {/* Value input — only for set */}
+          {operation === "set" && (
+            <Field label="Valor">
+              <Textarea
+                value={(cfg.value as string) ?? ""}
+                onChange={(e) => onUpdateConfig("value", e.target.value)}
+                placeholder="Valor a definir..."
+                rows={3}
+                style={{ fontFamily: "monospace", fontSize: 12 }}
+              />
+            </Field>
+          )}
+        </>
+      )}
+
+      {isInject && (
+        <>
+          <Field label="Chaves a injetar (uma por linha, vazio = todas)">
+            <Textarea
+              value={((cfg.keys as string[]) ?? []).join("\n")}
+              onChange={(e) => onUpdateConfig("keys", e.target.value.split("\n").filter(Boolean))}
+              placeholder={"API_KEY\nDB_URL"}
+              rows={4}
+              style={{ fontFamily: "monospace", fontSize: 12 }}
+            />
+          </Field>
+          <div style={{
+            background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.2)",
+            borderRadius: 7, padding: "9px 11px", fontSize: 11,
+            color: "hsl(var(--muted-foreground))", lineHeight: 1.6,
+          }}>
+            As variáveis injetadas ficam disponíveis para nodos downstream via pipeline scope.
+          </div>
+        </>
       )}
     </div>
   );
