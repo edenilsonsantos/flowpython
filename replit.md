@@ -42,6 +42,14 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - Stop running executions
 - Global variables (string, number, boolean, json types)
 - Credentials manager (api_key, basic_auth, oauth2, custom)
+- **Node Output Preview + Variable Picker**:
+  - Config panel has two tabs: "Config" (node settings) and "Saída" (output preview)
+  - "Saída" tab shows per-node pipeline variables from the last execution with type-colored chips
+  - Variable chips are draggable — drop onto any focused text input to insert `pipeline["varname"]`
+  - Click a chip to insert at cursor position (or copy to clipboard if no input is focused)
+  - "Variáveis de outros nodos" collapsible section in Config tab shows all other executed nodes' outputs
+  - "+ Ligar" button creates a visual edge between upstream node and selected node
+  - Backend: `GET /api/executions/workflow/:workflowId/last-outputs` returns per-node `outputSnapshot.pipeline`
 
 ## Key Commands
 

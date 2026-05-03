@@ -484,6 +484,55 @@ router.get("/executions/:id", async (req, res) => {
   }
 });
 
+// GET /executions/workflow/:workflowId/last-outputs — per-node pipeline snapshots from latest run
+router.get("/executions/workflow/:workflowId/last-outputs", async (req, res) => {
+  try {
+    const { workflowId } = req.params;
+    const [exec] = await db
+      .select()
+      .from(executionsTable)
+      .where(eq(executionsTable.workflowId, workflowId))
+      .orderBy(desc(executionsTable.startedAt))
+      .limit(1);
+
+    if (!exec) return res.json({ nodeOutputs: {}, executionId: null });
+
+    const nodeResults = (exec.nodeResults as any[]) ?? [];
+    const dbNodes = await db.select().from(nodesTable).where(eq(nodesTable.workflowId, workflowId));
+    const nodeMap = new Map(dbNodes.map((n) => [n.id, n]));
+
+    const nodeOutputs: Record<string, {
+      pipeline: Record<string, unknown>;
+      label: string;
+      status: string;
+      rawOutput: string | null;
+    }> = {};
+
+    for (const nr of nodeResults) {
+      const pipeline = (nr as any)?.outputSnapshot?.pipeline as Record<string, unknown> | undefined;
+      if (pipeline && typeof pipeline === "object") {
+        const node = nodeMap.get((nr as any).nodeId as string);
+        nodeOutputs[(nr as any).nodeId as string] = {
+          pipeline,
+          label: node?.label ?? ((nr as any).nodeId as string),
+          status: ((nr as any).status as string) ?? "unknown",
+          rawOutput: ((nr as any).output as string | null) ?? null,
+        };
+      }
+    }
+
+    res.json({
+      nodeOutputs,
+      executionId: exec.id,
+      executionStatus: exec.status,
+      executedAt: exec.startedAt.toISOString(),
+    });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // GET /executions/:id/debug — full debug payload (nodes + edges + logs + I/O snapshots)
 router.get("/executions/:id/debug", async (req, res) => {
   try {

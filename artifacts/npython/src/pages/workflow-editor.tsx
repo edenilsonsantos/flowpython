@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useParams, useLocation } from "wouter";
 import ReactFlow, {
   Background,
@@ -34,6 +34,7 @@ import {
   ArrowLeft, Play, Save, Settings, X, Trash2, AlertTriangle,
   FlaskConical, Pin, PinOff, CheckCircle2, XCircle, Loader2, Plus, Package,
   Eye, EyeOff, Lock, ShieldOff, Shield, Database,
+  ChevronDown, ChevronRight, Network, Copy, Zap,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -74,8 +75,24 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const [testLoading, setTestLoading] = useState(false);
   const initRef = useRef(false);
 
-  // Clear test result when selected node changes
-  useEffect(() => { setTestResult(null); }, [selectedNode?.id]);
+  // ── Last-run outputs (per-node pipeline snapshots) ─────────────────
+  type NodeOutput = { pipeline: Record<string, unknown>; label: string; status: string; rawOutput: string | null };
+  const [lastRunOutputs, setLastRunOutputs] = useState<Record<string, NodeOutput>>({});
+  const [configPanelTab, setConfigPanelTab] = useState<"config" | "output">("config");
+
+  // Clear test result + reset tab when selected node changes
+  useEffect(() => { setTestResult(null); setConfigPanelTab("config"); }, [selectedNode?.id]);
+
+  const fetchLastRunOutputs = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/executions/workflow/${workflowId}/last-outputs`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setLastRunOutputs(data.nodeOutputs ?? {});
+    } catch {}
+  }, [workflowId]);
+
+  useEffect(() => { fetchLastRunOutputs(); }, [fetchLastRunOutputs]);
 
   // Load workflow nodes/edges once
   useEffect(() => {
@@ -238,6 +255,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       );
       const data = await res.json();
       setTestResult({ output: data.output ?? data.error ?? "", success: data.success, durationMs: data.durationMs ?? 0 });
+      fetchLastRunOutputs();
     } catch (e: any) {
       setTestResult({ output: e.message, success: false, durationMs: 0 });
     } finally {
@@ -362,42 +380,127 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       {/* Config panel */}
       {selectedNode && (
         <div style={{
-          width: 360, height: "100%", background: "hsl(var(--card))",
+          width: 390, height: "100%", background: "hsl(var(--card))",
           borderLeft: "1px solid hsl(var(--border))",
           display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden",
         }}>
-          {/* Panel header */}
+          {/* Panel header + tabs */}
           <div style={{
-            padding: "12px 14px", borderBottom: "1px solid hsl(var(--border))",
-            display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
+            padding: "10px 14px 0", borderBottom: "1px solid hsl(var(--border))",
+            flexShrink: 0, background: "hsl(var(--card))",
           }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 13 }}>Configurar Node</div>
-              <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", marginTop: 2 }}>
-                {getNodeDef(selectedNode.data.type as string)?.description}
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ minWidth: 0, flex: 1, paddingRight: 8 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {selectedNode.data.label as string}
+                </div>
+                <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 1 }}>
+                  {getNodeDef(selectedNode.data.type as string)?.description}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                <Button variant="ghost" size="icon" onClick={deleteSelectedNode} title="Deletar node">
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+                <Button variant="ghost" size="icon" onClick={() => setSelectedNode(null)}>
+                  <X className="h-4 w-4" />
+                </Button>
               </div>
             </div>
-            <div style={{ display: "flex", gap: 4 }}>
-              <Button variant="ghost" size="icon" onClick={deleteSelectedNode} title="Deletar node">
-                <Trash2 className="h-4 w-4 text-destructive" />
-              </Button>
-              <Button variant="ghost" size="icon" onClick={() => setSelectedNode(null)}>
-                <X className="h-4 w-4" />
-              </Button>
+            {/* Tabs */}
+            <div style={{ display: "flex", gap: 0, marginBottom: -1 }}>
+              {([
+                { id: "config" as const, label: "Config", icon: <Settings size={11} /> },
+                {
+                  id: "output" as const,
+                  label: "Saída",
+                  icon: <Zap size={11} />,
+                  badge: lastRunOutputs[selectedNode.id]
+                    ? Object.keys(lastRunOutputs[selectedNode.id].pipeline).length
+                    : null,
+                  dot: !!lastRunOutputs[selectedNode.id],
+                },
+              ]).map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setConfigPanelTab(tab.id)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 4,
+                    padding: "5px 14px", border: "none", background: "transparent",
+                    borderBottom: configPanelTab === tab.id ? "2px solid #a78bfa" : "2px solid transparent",
+                    color: configPanelTab === tab.id ? "#a78bfa" : "hsl(var(--muted-foreground))",
+                    fontSize: 12, fontWeight: configPanelTab === tab.id ? 600 : 400,
+                    cursor: "pointer", transition: "all 0.12s",
+                  }}
+                >
+                  {tab.icon}
+                  {tab.label}
+                  {"badge" in tab && tab.badge != null && (
+                    <span style={{
+                      fontSize: 9, padding: "1px 5px", borderRadius: 10,
+                      background: "rgba(167,139,250,0.2)", color: "#a78bfa", fontWeight: 700,
+                    }}>{tab.badge}</span>
+                  )}
+                  {"dot" in tab && tab.dot && tab.badge === null && (
+                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#a78bfa" }} />
+                  )}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Panel body */}
-          <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
-            <NodeConfigPanel
-              node={selectedNode}
-              workflowId={workflowId}
-              onUpdateData={updateNodeData}
-              onUpdateConfig={updateNodeConfig}
-              onTestNode={handleTestNode}
-              testLoading={testLoading}
-              testResult={testResult}
-            />
+          {/* Panel body — drop zone for var chips */}
+          <div
+            style={{ flex: 1, overflowY: "auto", padding: 14 }}
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes("application/flowpython-var")) e.preventDefault();
+            }}
+            onDrop={(e) => {
+              const ref = e.dataTransfer.getData("application/flowpython-var");
+              if (!ref) return;
+              e.preventDefault();
+              insertVarRef(ref, toast);
+            }}
+          >
+            {configPanelTab === "output" ? (
+              <NodeOutputPreview
+                nodeId={selectedNode.id}
+                lastRunOutputs={lastRunOutputs}
+                onInsert={(ref) => insertVarRef(ref, toast)}
+              />
+            ) : (
+              <>
+                <UpstreamVarPicker
+                  nodeId={selectedNode.id}
+                  nodes={nodes}
+                  edges={edges}
+                  lastRunOutputs={lastRunOutputs}
+                  onInsert={(ref) => insertVarRef(ref, toast)}
+                  onConnect={(sourceId) => {
+                    setEdges((eds) => {
+                      if (eds.some((e) => e.source === sourceId && e.target === selectedNode!.id)) return eds;
+                      return addEdge({
+                        id: `edge_${Date.now()}`,
+                        source: sourceId,
+                        target: selectedNode!.id,
+                        type: "custom",
+                        animated: true,
+                        style: { stroke: "hsl(var(--primary))", strokeWidth: 2 },
+                      }, eds);
+                    });
+                  }}
+                />
+                <NodeConfigPanel
+                  node={selectedNode}
+                  workflowId={workflowId}
+                  onUpdateData={updateNodeData}
+                  onUpdateConfig={updateNodeConfig}
+                  onTestNode={handleTestNode}
+                  testLoading={testLoading}
+                  testResult={testResult}
+                />
+              </>
+            )}
           </div>
         </div>
       )}
@@ -406,6 +509,383 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
 }
 
 // ─── Config panel ─────────────────────────────────────────────────────────────
+
+// ─── Variable Preview System ──────────────────────────────────────────────────
+
+function insertVarRef(ref: string, toast: ReturnType<typeof useToast>["toast"]) {
+  const el = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+  if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA") && !el.readOnly) {
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const newVal = el.value.slice(0, start) + ref + el.value.slice(end);
+    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) {
+      setter.call(el, newVal);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.setSelectionRange(start + ref.length, start + ref.length);
+      return;
+    }
+  }
+  navigator.clipboard?.writeText(ref).catch(() => {});
+  toast({ title: "Variável copiada!", description: ref, duration: 2000 });
+}
+
+function getVarMeta(value: unknown): { type: string; color: string; preview: string } {
+  if (value === null || value === undefined) return { type: "null", color: "#94a3b8", preview: "null" };
+  if (Array.isArray(value)) return { type: "lista", color: "#f59e0b", preview: `[${value.length} item(s)]` };
+  const t = typeof value;
+  if (t === "boolean") return { type: "bool", color: "#f472b6", preview: String(value) };
+  if (t === "number") return { type: "num", color: "#60a5fa", preview: String(value) };
+  if (t === "object") return {
+    type: "dict", color: "#a78bfa",
+    preview: `{${Object.keys(value as object).length} chave(s)}`,
+  };
+  const s = String(value);
+  return { type: "str", color: "#34d399", preview: s.length > 38 ? s.slice(0, 38) + "…" : s };
+}
+
+function VarChip({
+  varName, value, onInsert,
+}: {
+  varName: string; value: unknown; onInsert: (ref: string) => void;
+}) {
+  const ref = `pipeline["${varName}"]`;
+  const { type, color, preview } = getVarMeta(value);
+  return (
+    <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("application/flowpython-var", ref);
+        e.dataTransfer.setData("text/plain", ref);
+        e.dataTransfer.effectAllowed = "copy";
+      }}
+      onClick={() => onInsert(ref)}
+      title={`Clique ou arraste → ${ref}`}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        padding: "3px 7px", borderRadius: 6, marginBottom: 4, marginRight: 4,
+        border: `1px solid ${color}44`, background: `${color}12`,
+        cursor: "grab", userSelect: "none", maxWidth: "100%",
+        transition: "background 0.1s",
+      }}
+    >
+      <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 600, color, flexShrink: 0 }}>{varName}</span>
+      <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: `${color}22`, color, fontWeight: 700, flexShrink: 0 }}>{type}</span>
+      <span style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 100 }}>{preview}</span>
+    </div>
+  );
+}
+
+function JsonVarRow({ name, value }: { name: string; value: unknown }) {
+  const [expanded, setExpanded] = useState(false);
+  const { type, color, preview } = getVarMeta(value);
+  const isExpandable = typeof value === "object" && value !== null;
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div
+        style={{ display: "flex", alignItems: "baseline", gap: 6, cursor: isExpandable ? "pointer" : "default" }}
+        onClick={() => isExpandable && setExpanded((e) => !e)}
+      >
+        <span style={{ width: 10, flexShrink: 0, color: "hsl(var(--muted-foreground))", fontSize: 10 }}>
+          {isExpandable ? (expanded ? "▼" : "▶") : ""}
+        </span>
+        <span style={{ fontFamily: "monospace", fontSize: 11, color, fontWeight: 600 }}>{name}</span>
+        <span style={{ fontSize: 9, color: "hsl(var(--muted-foreground))", padding: "1px 3px", background: `${color}15`, borderRadius: 3 }}>{type}</span>
+        {!expanded && (
+          <span style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", fontFamily: "monospace", wordBreak: "break-all", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {preview}
+          </span>
+        )}
+      </div>
+      {expanded && isExpandable && (
+        <pre style={{
+          fontSize: 10, color: "hsl(var(--muted-foreground))", fontFamily: "monospace",
+          whiteSpace: "pre-wrap", wordBreak: "break-all", margin: "4px 0 0 16px",
+          maxHeight: 220, overflowY: "auto",
+        }}>
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+// ─── Saída tab: output of the selected node ───────────────────────────────────
+
+type NodeOutputMap = Record<string, {
+  pipeline: Record<string, unknown>; label: string; status: string; rawOutput: string | null;
+}>;
+
+function NodeOutputPreview({
+  nodeId, lastRunOutputs, onInsert,
+}: {
+  nodeId: string; lastRunOutputs: NodeOutputMap; onInsert: (ref: string) => void;
+}) {
+  const [showRaw, setShowRaw] = useState(false);
+  const out = lastRunOutputs[nodeId];
+
+  if (!out) {
+    return (
+      <div style={{ padding: "32px 16px", textAlign: "center", color: "hsl(var(--muted-foreground))" }}>
+        <Zap size={28} style={{ margin: "0 auto 10px", opacity: 0.3 }} />
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Nenhuma execução registrada</div>
+        <div style={{ fontSize: 11 }}>Execute o workflow para ver a saída deste nodo.</div>
+      </div>
+    );
+  }
+
+  const vars = Object.entries(out.pipeline);
+  const statusColor = out.status === "success" ? "#10b981" : out.status === "failed" ? "#ef4444" : "#94a3b8";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Status */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{
+          display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px",
+          borderRadius: 12, background: `${statusColor}20`, border: `1px solid ${statusColor}44`,
+          fontSize: 11, fontWeight: 600, color: statusColor,
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor }} />
+          {out.status === "success" ? "Sucesso" : out.status === "failed" ? "Falhou" : out.status}
+        </span>
+        <span style={{ fontSize: 11, color: "hsl(var(--muted-foreground))" }}>
+          {vars.length} variável(is)
+        </span>
+      </div>
+
+      {/* Draggable chips */}
+      {vars.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "hsl(var(--muted-foreground))", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+            Clique ou arraste para inserir no campo focado
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap" }}>
+            {vars.map(([k, v]) => <VarChip key={k} varName={k} value={v} onInsert={onInsert} />)}
+          </div>
+        </div>
+      )}
+
+      {/* JSON tree */}
+      {vars.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "hsl(var(--muted-foreground))", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
+            Valores
+          </div>
+          <div style={{
+            background: "rgba(0,0,0,0.25)", border: "1px solid hsl(var(--border))",
+            borderRadius: 8, padding: "10px 12px", maxHeight: 300, overflowY: "auto",
+          }}>
+            {vars.map(([k, v]) => <JsonVarRow key={k} name={k} value={v} />)}
+          </div>
+        </div>
+      )}
+
+      {/* All-chips action row */}
+      {vars.length > 1 && (
+        <button
+          onClick={() => {
+            const allRefs = vars.map(([k]) => `pipeline["${k}"]`).join(", ");
+            navigator.clipboard?.writeText(allRefs).catch(() => {});
+            onInsert(allRefs);
+          }}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, fontSize: 11,
+            color: "#a78bfa", background: "rgba(167,139,250,0.08)",
+            border: "1px solid rgba(167,139,250,0.25)", borderRadius: 6,
+            padding: "6px 12px", cursor: "pointer", width: "100%", justifyContent: "center",
+          }}
+        >
+          <Copy size={11} /> Copiar todas as referências
+        </button>
+      )}
+
+      {/* Raw stdout */}
+      {out.rawOutput && (
+        <div>
+          <button
+            onClick={() => setShowRaw((r) => !r)}
+            style={{
+              display: "flex", alignItems: "center", gap: 5, background: "none", border: "none",
+              cursor: "pointer", color: "hsl(var(--muted-foreground))", fontSize: 11, padding: 0, marginBottom: showRaw ? 6 : 0,
+            }}
+          >
+            {showRaw ? <ChevronDown size={11} /> : <ChevronRight size={11} />} Saída bruta (stdout)
+          </button>
+          {showRaw && (
+            <pre style={{
+              fontSize: 10, background: "rgba(0,0,0,0.35)", border: "1px solid hsl(var(--border))",
+              borderRadius: 6, padding: "8px 10px", maxHeight: 200, overflowY: "auto",
+              margin: 0, color: "#a3e635", fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all",
+            }}>
+              {out.rawOutput}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {vars.length === 0 && !out.rawOutput && (
+        <div style={{ fontSize: 12, color: "hsl(var(--muted-foreground))", textAlign: "center", padding: "10px 0" }}>
+          Nenhuma variável no pipeline após esta execução.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Upstream Var Picker: variables from all ancestor nodes ───────────────────
+
+function UpstreamVarPicker({
+  nodeId, nodes, edges, lastRunOutputs, onInsert, onConnect,
+}: {
+  nodeId: string;
+  nodes: ReactFlowNode[];
+  edges: ReactFlowEdge[];
+  lastRunOutputs: NodeOutputMap;
+  onInsert: (ref: string) => void;
+  onConnect: (sourceId: string) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const [openNodes, setOpenNodes] = useState<Record<string, boolean>>({});
+
+  const allOtherNodesWithOutput = useMemo(() => {
+    // Collect all ancestors recursively
+    const ancestors = new Set<string>();
+    const queue = [nodeId];
+    while (queue.length) {
+      const cur = queue.shift()!;
+      for (const e of edges) {
+        if (e.target === cur && !ancestors.has(e.source)) {
+          ancestors.add(e.source);
+          queue.push(e.source);
+        }
+      }
+    }
+    const directlyConnected = new Set(edges.filter((e) => e.target === nodeId).map((e) => e.source));
+
+    // All OTHER nodes that have run output (prefer upstream first)
+    return Object.entries(lastRunOutputs)
+      .filter(([id]) => id !== nodeId)
+      .map(([id, out]) => ({
+        id,
+        label: out.label,
+        pipeline: out.pipeline,
+        status: out.status,
+        rawOutput: out.rawOutput,
+        isAncestor: ancestors.has(id),
+        isDirectlyConnected: directlyConnected.has(id),
+      }))
+      .sort((a, b) => (b.isAncestor ? 1 : 0) - (a.isAncestor ? 1 : 0));
+  }, [nodeId, edges, lastRunOutputs]);
+
+  if (allOtherNodesWithOutput.length === 0) return null;
+
+  return (
+    <div style={{
+      border: "1px solid rgba(167,139,250,0.25)", borderRadius: 8,
+      background: "rgba(167,139,250,0.04)", marginBottom: 14, overflow: "hidden",
+    }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: "100%", display: "flex", alignItems: "center", gap: 6,
+          padding: "8px 12px", background: "transparent", border: "none",
+          cursor: "pointer", color: "#a78bfa", fontSize: 12, fontWeight: 600,
+        }}
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <Network size={12} />
+        Variáveis de outros nodos
+        <span style={{
+          marginLeft: "auto", fontSize: 10, padding: "1px 7px",
+          background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)",
+          borderRadius: 10, color: "#a78bfa",
+        }}>
+          {allOtherNodesWithOutput.length}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ borderTop: "1px solid rgba(167,139,250,0.15)" }}>
+          {allOtherNodesWithOutput.map(({ id, label, pipeline, status, isAncestor, isDirectlyConnected }) => {
+            const isNodeOpen = openNodes[id] !== false;
+            const vars = Object.entries(pipeline);
+            const statusColor = status === "success" ? "#10b981" : status === "failed" ? "#ef4444" : "#94a3b8";
+            return (
+              <div key={id} style={{ borderBottom: "1px solid rgba(167,139,250,0.1)" }}>
+                {/* Node row header */}
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "6px 12px",
+                  background: isAncestor ? "rgba(167,139,250,0.06)" : "transparent",
+                }}>
+                  <button
+                    onClick={() => setOpenNodes((prev) => ({ ...prev, [id]: !isNodeOpen }))}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 5, flex: 1,
+                      background: "none", border: "none", cursor: "pointer",
+                      color: isAncestor ? "#a78bfa" : "hsl(var(--foreground))",
+                      textAlign: "left", padding: 0, minWidth: 0,
+                    }}
+                  >
+                    {isNodeOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, overflow: "hidden",
+                      textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
+                    }}>
+                      {label}
+                    </span>
+                    {isAncestor && (
+                      <span style={{
+                        fontSize: 9, padding: "1px 5px", borderRadius: 4, flexShrink: 0,
+                        background: "rgba(167,139,250,0.2)", color: "#a78bfa", fontWeight: 600,
+                      }}>upstream</span>
+                    )}
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor, flexShrink: 0 }} />
+                    <span style={{ fontSize: 9, color: "hsl(var(--muted-foreground))", flexShrink: 0 }}>
+                      {vars.length}v
+                    </span>
+                  </button>
+
+                  {/* Connect / connected indicator */}
+                  {isDirectlyConnected ? (
+                    <span style={{ fontSize: 9, color: "#10b981", fontWeight: 700, flexShrink: 0 }}>✓</span>
+                  ) : (
+                    <button
+                      onClick={() => onConnect(id)}
+                      title={`Conectar ${label} → este nodo`}
+                      style={{
+                        flexShrink: 0, fontSize: 10, padding: "2px 7px",
+                        background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.35)",
+                        borderRadius: 4, color: "#a78bfa", cursor: "pointer", fontWeight: 600,
+                      }}
+                    >
+                      + Ligar
+                    </button>
+                  )}
+                </div>
+
+                {/* Variable chips */}
+                {isNodeOpen && (
+                  <div style={{ padding: "4px 12px 8px", display: "flex", flexWrap: "wrap" }}>
+                    {vars.length > 0 ? (
+                      vars.map(([k, v]) => <VarChip key={k} varName={k} value={v} onInsert={onInsert} />)
+                    ) : (
+                      <span style={{ fontSize: 10, color: "hsl(var(--muted-foreground))" }}>sem variáveis</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function NodeConfigPanel({
   node,
