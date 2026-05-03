@@ -9,6 +9,129 @@ import fs from "fs/promises";
 
 const router = Router();
 
+// ─── HTTP Request Script Builder ─────────────────────────────────────────────
+
+function buildHttpRequestScript(
+  config: Record<string, unknown>,
+  pipelineContext: Record<string, unknown> = {}
+): string {
+  const method = (config.method as string) ?? "GET";
+  const url = (config.url as string) ?? "";
+  const rawParams = (config.params as Array<{ key: string; value: string; enabled: boolean }>) ?? [];
+  const rawHeaders = (config.headers as Array<{ key: string; value: string; enabled: boolean }>) ?? [];
+  const bodyType = (config.bodyType as string) ?? "none";
+  const bodyJson = (config.bodyJson as string) ?? "";
+  const rawBodyForm = (config.bodyForm as Array<{ key: string; value: string; enabled: boolean }>) ?? [];
+  const bodyRaw = (config.bodyRaw as string) ?? "";
+  const bodyRawContentType = (config.bodyRawContentType as string) ?? "text/plain";
+  const authType = (config.authType as string) ?? "none";
+  const authBearer = (config.authBearer as string) ?? "";
+  const authUsername = (config.authUsername as string) ?? "";
+  const authPassword = (config.authPassword as string) ?? "";
+  const authApiKeyName = (config.authApiKeyName as string) ?? "";
+  const authApiKeyValue = (config.authApiKeyValue as string) ?? "";
+  const authApiKeyIn = (config.authApiKeyIn as string) ?? "header";
+  const sslVerify = (config.sslVerify as boolean) !== false;
+  const certPath = (config.certPath as string) ?? "";
+  const timeout = Math.max(1, Number(config.timeout ?? 30));
+  const followRedirects = (config.followRedirects as boolean) !== false;
+
+  const paramsObj = Object.fromEntries(rawParams.filter((p) => p.enabled && p.key).map((p) => [p.key, p.value]));
+  const headersObj = Object.fromEntries(rawHeaders.filter((h) => h.enabled && h.key).map((h) => [h.key, h.value]));
+  const bodyFormObj = Object.fromEntries(rawBodyForm.filter((f) => f.enabled && f.key).map((f) => [f.key, f.value]));
+
+  const sslExpr = certPath
+    ? JSON.stringify(certPath)
+    : sslVerify
+    ? "True"
+    : "False";
+
+  return `import requests, json, sys
+
+method = ${JSON.stringify(method)}
+url = ${JSON.stringify(url)}
+params = ${JSON.stringify(paramsObj)}
+headers = ${JSON.stringify(headersObj)}
+ssl_verify = ${sslExpr}
+timeout = ${timeout}
+follow_redirects = ${followRedirects ? "True" : "False"}
+_pipeline = ${JSON.stringify(pipelineContext)}
+
+# Auth setup
+auth_type = ${JSON.stringify(authType)}
+if auth_type == "bearer":
+    headers["Authorization"] = "Bearer " + ${JSON.stringify(authBearer)}
+elif auth_type == "apikey":
+    if ${JSON.stringify(authApiKeyIn)} == "header":
+        headers[${JSON.stringify(authApiKeyName)}] = ${JSON.stringify(authApiKeyValue)}
+    else:
+        params[${JSON.stringify(authApiKeyName)}] = ${JSON.stringify(authApiKeyValue)}
+
+auth = None
+if auth_type == "basic":
+    auth = (${JSON.stringify(authUsername)}, ${JSON.stringify(authPassword)})
+
+# Build kwargs
+kwargs = dict(
+    method=method,
+    url=url,
+    headers=headers,
+    params=params,
+    verify=ssl_verify,
+    timeout=timeout,
+    allow_redirects=follow_redirects,
+)
+
+body_type = ${JSON.stringify(bodyType)}
+if body_type == "json":
+    body_raw = ${JSON.stringify(bodyJson)}
+    if body_raw.strip():
+        try:
+            kwargs["json"] = json.loads(body_raw)
+        except Exception as e:
+            print(f"[WARN] Body JSON inválido: {e}", file=sys.stderr)
+            kwargs["data"] = body_raw
+            headers.setdefault("Content-Type", "application/json")
+elif body_type == "form":
+    kwargs["data"] = ${JSON.stringify(bodyFormObj)}
+elif body_type == "raw":
+    kwargs["data"] = ${JSON.stringify(bodyRaw)}
+    headers.setdefault("Content-Type", ${JSON.stringify(bodyRawContentType)})
+
+if auth:
+    kwargs["auth"] = auth
+
+try:
+    response = requests.request(**kwargs)
+    elapsed_ms = int(response.elapsed.total_seconds() * 1000)
+    print(f"HTTP {response.status_code} {response.reason}")
+    print(f"URL: {response.url}")
+    print(f"Tempo: {elapsed_ms}ms")
+    print(f"Content-Type: {response.headers.get('content-type', 'desconhecido')}")
+    print()
+    try:
+        data = response.json()
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception:
+        text = response.text
+        if len(text) > 5000:
+            text = text[:5000] + "\\n...(truncado)"
+        print(text)
+except requests.exceptions.SSLError as e:
+    print(f"Erro SSL: {e}", file=sys.stderr)
+    sys.exit(1)
+except requests.exceptions.ConnectionError as e:
+    print(f"Erro de conexão: {e}", file=sys.stderr)
+    sys.exit(1)
+except requests.exceptions.Timeout:
+    print(f"Timeout após {timeout}s", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f"Erro: {e}", file=sys.stderr)
+    sys.exit(1)
+`;
+}
+
 // GET /workflows/:workflowId/nodes
 router.get("/workflows/:workflowId/nodes", async (req, res) => {
   try {
@@ -149,12 +272,11 @@ router.post("/workflows/:workflowId/nodes/:nodeId/execute", async (req, res) => 
     if (!node) return res.status(404).json({ error: "Node not found" });
 
     const config = node.config as Record<string, unknown>;
-    const code = (config.code as string) ?? "";
 
-    if (node.type !== "code") {
+    if (node.type !== "code" && node.type !== "http_request") {
       return res.json({
         success: true,
-        output: `Node type '${node.type}' executed (no code to run).`,
+        output: `Node type '${node.type}' executed (no runner available for isolated test).`,
         returnValue: null,
         durationMs: 0,
         error: null,
@@ -165,14 +287,14 @@ router.post("/workflows/:workflowId/nodes/:nodeId/execute", async (req, res) => 
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "npython-"));
     const scriptPath = path.join(tmpDir, "script.py");
 
-    const wrappedCode = `
-import json, sys
-
-_input = ${JSON.stringify(inputData)}
-
-${code}
-`;
-    await fs.writeFile(scriptPath, wrappedCode, "utf8");
+    let scriptContent: string;
+    if (node.type === "http_request") {
+      scriptContent = buildHttpRequestScript(config, inputData as Record<string, unknown>);
+    } else {
+      const code = (config.code as string) ?? "";
+      scriptContent = `import json, sys\n\n_input = ${JSON.stringify(inputData)}\n\n${code}\n`;
+    }
+    await fs.writeFile(scriptPath, scriptContent, "utf8");
 
     const start = Date.now();
 

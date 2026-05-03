@@ -33,7 +33,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   ArrowLeft, Play, Save, Settings, X, Trash2, AlertTriangle,
   FlaskConical, Pin, PinOff, CheckCircle2, XCircle, Loader2, Plus, Package,
+  Eye, EyeOff, Lock, ShieldOff, Shield,
 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import CodeMirror from "@uiw/react-codemirror";
@@ -497,18 +499,9 @@ function NodeConfigPanel({
         </Field>
       )}
 
-      {type === "http_request" && <>
-        <Field label="Método">
-          <Select value={(cfg.method as string) ?? "GET"} onValueChange={(v) => onUpdateConfig("method", v)}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>{["GET","POST","PUT","PATCH","DELETE"].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
-          </Select>
-        </Field>
-        <Field label="URL"><Input value={(cfg.url as string) ?? ""} onChange={(e) => onUpdateConfig("url", e.target.value)} placeholder="https://api.example.com/endpoint" /></Field>
-        <Field label="Body (JSON)">
-          <Textarea value={(cfg.body as string) ?? ""} onChange={(e) => onUpdateConfig("body", e.target.value)} placeholder='{"key": "value"}' rows={3} style={{ fontFamily: "monospace", fontSize: 12 }} />
-        </Field>
-      </>}
+      {type === "http_request" && (
+        <HttpRequestConfig cfg={cfg} onUpdateConfig={onUpdateConfig} />
+      )}
 
       {type === "wait" && (
         <Field label="Segundos">
@@ -1106,6 +1099,481 @@ function DataNodeConfig({
   );
 
   return null;
+}
+
+// ─── HTTP Request Config ──────────────────────────────────────────────────────
+
+interface KVPair { key: string; value: string; enabled: boolean; }
+
+function KeyValueEditor({
+  pairs,
+  onChange,
+  keyPlaceholder = "chave",
+  valuePlaceholder = "valor",
+  addLabel = "Adicionar linha",
+}: {
+  pairs: KVPair[];
+  onChange: (pairs: KVPair[]) => void;
+  keyPlaceholder?: string;
+  valuePlaceholder?: string;
+  addLabel?: string;
+}) {
+  const add = () => onChange([...pairs, { key: "", value: "", enabled: true }]);
+  const remove = (i: number) => onChange(pairs.filter((_, idx) => idx !== i));
+  const update = (i: number, field: keyof KVPair, val: string | boolean) =>
+    onChange(pairs.map((p, idx) => idx === i ? { ...p, [field]: val } : p));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      {pairs.map((p, i) => (
+        <div key={i} style={{ display: "flex", gap: 5, alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={p.enabled}
+            onChange={(e) => update(i, "enabled", e.target.checked)}
+            style={{ cursor: "pointer", accentColor: "#14b8a6", flexShrink: 0, width: 14, height: 14 }}
+          />
+          <Input
+            value={p.key}
+            onChange={(e) => update(i, "key", e.target.value)}
+            placeholder={keyPlaceholder}
+            style={{ fontFamily: "monospace", fontSize: 11, flex: 1, opacity: p.enabled ? 1 : 0.45, height: 30 }}
+          />
+          <Input
+            value={p.value}
+            onChange={(e) => update(i, "value", e.target.value)}
+            placeholder={valuePlaceholder}
+            style={{ fontFamily: "monospace", fontSize: 11, flex: 1.5, opacity: p.enabled ? 1 : 0.45, height: 30 }}
+          />
+          <Button size="icon" variant="ghost" onClick={() => remove(i)} style={{ height: 28, width: 28, flexShrink: 0 }}>
+            <Trash2 size={11} className="text-destructive" />
+          </Button>
+        </div>
+      ))}
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={add}
+        style={{ height: 26, fontSize: 11, padding: "0 10px", alignSelf: "flex-start", marginTop: 2 }}
+      >
+        <Plus size={10} style={{ marginRight: 4 }} /> {addLabel}
+      </Button>
+    </div>
+  );
+}
+
+function HttpRequestConfig({
+  cfg,
+  onUpdateConfig,
+}: {
+  cfg: Record<string, unknown>;
+  onUpdateConfig: (k: string, v: unknown) => void;
+}) {
+  const [showPassword, setShowPassword] = useState(false);
+  const [showBearer, setShowBearer] = useState(false);
+
+  const method = (cfg.method as string) ?? "GET";
+  const bodyType = (cfg.bodyType as string) ?? "none";
+  const authType = (cfg.authType as string) ?? "none";
+  const params = (cfg.params as KVPair[]) ?? [];
+  const headers = (cfg.headers as KVPair[]) ?? [];
+  const bodyForm = (cfg.bodyForm as KVPair[]) ?? [];
+  const sslVerify = (cfg.sslVerify as boolean) !== false;
+
+  const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+  const BODY_TYPES = [
+    { value: "none", label: "Sem body" },
+    { value: "json", label: "JSON" },
+    { value: "form", label: "Form Data" },
+    { value: "raw", label: "Raw Text" },
+  ];
+  const AUTH_TYPES = [
+    { value: "none", label: "Sem auth" },
+    { value: "bearer", label: "Bearer Token" },
+    { value: "basic", label: "Basic Auth" },
+    { value: "apikey", label: "API Key" },
+  ];
+
+  const tabLabel = (label: string, count?: number) =>
+    count !== undefined && count > 0 ? `${label} (${count})` : label;
+
+  const activeParams = params.filter((p) => p.enabled && p.key).length;
+  const activeHeaders = headers.filter((h) => h.enabled && h.key).length;
+
+  const sectionStyle: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 10, paddingTop: 10 };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+      {/* Method + URL */}
+      <div style={{ display: "flex", gap: 7, alignItems: "flex-end" }}>
+        <div style={{ flexShrink: 0, width: 110 }}>
+          <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>Método</label>
+          <Select value={method} onValueChange={(v) => onUpdateConfig("method", v)}>
+            <SelectTrigger style={{ height: 32, fontSize: 12, fontWeight: 700 }}><SelectValue /></SelectTrigger>
+            <SelectContent>{METHODS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>URL</label>
+          <Input
+            value={(cfg.url as string) ?? ""}
+            onChange={(e) => onUpdateConfig("url", e.target.value)}
+            placeholder="https://api.example.com/v1/resource"
+            style={{ fontSize: 12, height: 32, fontFamily: "monospace" }}
+          />
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <Tabs defaultValue="params">
+        <TabsList style={{ width: "100%", height: 32 }}>
+          <TabsTrigger value="params" style={{ flex: 1, fontSize: 11 }}>{tabLabel("Params", activeParams)}</TabsTrigger>
+          <TabsTrigger value="headers" style={{ flex: 1, fontSize: 11 }}>{tabLabel("Headers", activeHeaders)}</TabsTrigger>
+          <TabsTrigger value="body" style={{ flex: 1, fontSize: 11 }}>Body</TabsTrigger>
+          <TabsTrigger value="auth" style={{ flex: 1, fontSize: 11 }}>Auth</TabsTrigger>
+          <TabsTrigger value="options" style={{ flex: 1, fontSize: 11 }}>Opções</TabsTrigger>
+        </TabsList>
+
+        {/* ── Params ── */}
+        <TabsContent value="params">
+          <div style={sectionStyle}>
+            {params.length === 0 && (
+              <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", textAlign: "center", padding: "8px 0" }}>
+                Nenhum query param — aparecem após ? na URL
+              </div>
+            )}
+            <KeyValueEditor
+              pairs={params}
+              onChange={(v) => onUpdateConfig("params", v)}
+              keyPlaceholder="param"
+              valuePlaceholder="valor"
+            />
+          </div>
+        </TabsContent>
+
+        {/* ── Headers ── */}
+        <TabsContent value="headers">
+          <div style={sectionStyle}>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {[
+                ["Content-Type", "application/json"],
+                ["Accept", "application/json"],
+                ["Authorization", "Bearer ..."],
+                ["User-Agent", "flowpython/1.0"],
+              ].map(([k, v]) => (
+                <button
+                  key={k}
+                  onClick={() => {
+                    if (!headers.find((h) => h.key === k)) {
+                      onUpdateConfig("headers", [...headers, { key: k, value: v, enabled: true }]);
+                    }
+                  }}
+                  style={{
+                    fontSize: 10, padding: "3px 8px", borderRadius: 5,
+                    border: "1px solid hsl(var(--border))",
+                    background: "rgba(255,255,255,0.04)", cursor: "pointer",
+                    color: "hsl(var(--muted-foreground))",
+                  }}
+                >
+                  + {k}
+                </button>
+              ))}
+            </div>
+            <KeyValueEditor
+              pairs={headers}
+              onChange={(v) => onUpdateConfig("headers", v)}
+              keyPlaceholder="Header-Name"
+              valuePlaceholder="valor"
+            />
+          </div>
+        </TabsContent>
+
+        {/* ── Body ── */}
+        <TabsContent value="body">
+          <div style={sectionStyle}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 6 }}>Tipo de body</label>
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                {BODY_TYPES.map((bt) => (
+                  <button
+                    key={bt.value}
+                    onClick={() => onUpdateConfig("bodyType", bt.value)}
+                    style={{
+                      padding: "4px 11px", borderRadius: 6, fontSize: 11, cursor: "pointer",
+                      border: `1.5px solid ${bodyType === bt.value ? "#60a5fa" : "hsl(var(--border))"}`,
+                      background: bodyType === bt.value ? "rgba(96,165,250,0.12)" : "transparent",
+                      color: bodyType === bt.value ? "#60a5fa" : "hsl(var(--muted-foreground))",
+                      fontWeight: bodyType === bt.value ? 700 : 400,
+                    }}
+                  >
+                    {bt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {bodyType === "json" && (
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>JSON Body</label>
+                <Textarea
+                  value={(cfg.bodyJson as string) ?? ""}
+                  onChange={(e) => onUpdateConfig("bodyJson", e.target.value)}
+                  placeholder={'{\n  "key": "value"\n}'}
+                  rows={5}
+                  style={{ fontFamily: "monospace", fontSize: 11, lineHeight: 1.5 }}
+                />
+              </div>
+            )}
+
+            {bodyType === "form" && (
+              <KeyValueEditor
+                pairs={bodyForm}
+                onChange={(v) => onUpdateConfig("bodyForm", v)}
+                keyPlaceholder="campo"
+                valuePlaceholder="valor"
+                addLabel="Adicionar campo"
+              />
+            )}
+
+            {bodyType === "raw" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>Content-Type</label>
+                  <Select value={(cfg.bodyRawContentType as string) ?? "text/plain"} onValueChange={(v) => onUpdateConfig("bodyRawContentType", v)}>
+                    <SelectTrigger style={{ height: 30, fontSize: 11 }}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {["text/plain","text/html","application/xml","text/xml","application/javascript","text/css"].map((ct) => (
+                        <SelectItem key={ct} value={ct} style={{ fontSize: 12 }}>{ct}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Textarea
+                  value={(cfg.bodyRaw as string) ?? ""}
+                  onChange={(e) => onUpdateConfig("bodyRaw", e.target.value)}
+                  placeholder="Raw text body..."
+                  rows={5}
+                  style={{ fontFamily: "monospace", fontSize: 11 }}
+                />
+              </div>
+            )}
+
+            {bodyType === "none" && (
+              <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", textAlign: "center", padding: "4px 0" }}>
+                Nenhum body será enviado
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* ── Auth ── */}
+        <TabsContent value="auth">
+          <div style={sectionStyle}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 6 }}>Tipo de autenticação</label>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {AUTH_TYPES.map((at) => (
+                  <button
+                    key={at.value}
+                    onClick={() => onUpdateConfig("authType", at.value)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      padding: "7px 10px", borderRadius: 7, cursor: "pointer", textAlign: "left",
+                      border: `1.5px solid ${authType === at.value ? "#f472b6" : "hsl(var(--border))"}`,
+                      background: authType === at.value ? "rgba(244,114,182,0.08)" : "transparent",
+                    }}
+                  >
+                    <div style={{
+                      width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                      background: authType === at.value ? "#f472b6" : "hsl(var(--muted-foreground))",
+                    }} />
+                    <span style={{ fontSize: 12, fontWeight: authType === at.value ? 600 : 400, color: authType === at.value ? "#f472b6" : "hsl(var(--foreground))" }}>
+                      {at.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {authType === "bearer" && (
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>Token</label>
+                <div style={{ position: "relative" }}>
+                  <Input
+                    type={showBearer ? "text" : "password"}
+                    value={(cfg.authBearer as string) ?? ""}
+                    onChange={(e) => onUpdateConfig("authBearer", e.target.value)}
+                    placeholder="eyJhbGciOi..."
+                    style={{ fontFamily: "monospace", fontSize: 11, paddingRight: 32 }}
+                  />
+                  <button
+                    onClick={() => setShowBearer(!showBearer)}
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "hsl(var(--muted-foreground))", padding: 0 }}
+                  >
+                    {showBearer ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                </div>
+                <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 4 }}>Adicionado como <code>Authorization: Bearer &lt;token&gt;</code></div>
+              </div>
+            )}
+
+            {authType === "basic" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>Usuário</label>
+                  <Input
+                    value={(cfg.authUsername as string) ?? ""}
+                    onChange={(e) => onUpdateConfig("authUsername", e.target.value)}
+                    placeholder="username"
+                    style={{ fontSize: 12 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>Senha</label>
+                  <div style={{ position: "relative" }}>
+                    <Input
+                      type={showPassword ? "text" : "password"}
+                      value={(cfg.authPassword as string) ?? ""}
+                      onChange={(e) => onUpdateConfig("authPassword", e.target.value)}
+                      placeholder="••••••••"
+                      style={{ paddingRight: 32, fontSize: 12 }}
+                    />
+                    <button
+                      onClick={() => setShowPassword(!showPassword)}
+                      style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "hsl(var(--muted-foreground))", padding: 0 }}
+                    >
+                      {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {authType === "apikey" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>Nome da chave</label>
+                  <Input
+                    value={(cfg.authApiKeyName as string) ?? "X-API-Key"}
+                    onChange={(e) => onUpdateConfig("authApiKeyName", e.target.value)}
+                    placeholder="X-API-Key"
+                    style={{ fontFamily: "monospace", fontSize: 12 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>Valor</label>
+                  <Input
+                    value={(cfg.authApiKeyValue as string) ?? ""}
+                    onChange={(e) => onUpdateConfig("authApiKeyValue", e.target.value)}
+                    placeholder="sk-..."
+                    style={{ fontFamily: "monospace", fontSize: 12 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>Enviar como</label>
+                  <Select value={(cfg.authApiKeyIn as string) ?? "header"} onValueChange={(v) => onUpdateConfig("authApiKeyIn", v)}>
+                    <SelectTrigger style={{ height: 30, fontSize: 11 }}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="header">Header HTTP</SelectItem>
+                      <SelectItem value="query">Query string</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* ── Opções ── */}
+        <TabsContent value="options">
+          <div style={sectionStyle}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                {sslVerify
+                  ? <Shield size={13} color="#22c55e" />
+                  : <ShieldOff size={13} color="#f59e0b" />}
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 500 }}>Verificar SSL</div>
+                  <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))" }}>
+                    {sslVerify ? "Certificados SSL validados" : "SSL ignorado (inseguro)"}
+                  </div>
+                </div>
+              </div>
+              <Switch checked={sslVerify} onCheckedChange={(v) => onUpdateConfig("sslVerify", v)} />
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 500 }}>Seguir redirecionamentos</div>
+                <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))" }}>Segue automaticamente 3xx</div>
+              </div>
+              <Switch
+                checked={(cfg.followRedirects as boolean) !== false}
+                onCheckedChange={(v) => onUpdateConfig("followRedirects", v)}
+              />
+            </div>
+
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>Timeout (segundos)</label>
+              <Input
+                type="number"
+                min={1}
+                max={300}
+                value={(cfg.timeout as number) ?? 30}
+                onChange={(e) => onUpdateConfig("timeout", Number(e.target.value))}
+                style={{ fontSize: 12 }}
+              />
+            </div>
+
+            {!sslVerify && (
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>
+                  Caminho do certificado CA (opcional)
+                </label>
+                <Input
+                  value={(cfg.certPath as string) ?? ""}
+                  onChange={(e) => onUpdateConfig("certPath", e.target.value)}
+                  placeholder="/path/to/ca-bundle.crt"
+                  style={{ fontFamily: "monospace", fontSize: 11 }}
+                />
+                <div style={{ fontSize: 10, color: "#f59e0b", marginTop: 4 }}>
+                  ⚠️ Desativar SSL pode expor dados sensíveis
+                </div>
+              </div>
+            )}
+
+            {sslVerify && (
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>
+                  Certificado cliente (opcional, .pem)
+                </label>
+                <Input
+                  value={(cfg.certPath as string) ?? ""}
+                  onChange={(e) => onUpdateConfig("certPath", e.target.value)}
+                  placeholder="/path/to/client.pem"
+                  style={{ fontFamily: "monospace", fontSize: 11 }}
+                />
+              </div>
+            )}
+
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>Variável de saída</label>
+              <Input
+                value={(cfg.outputVar as string) ?? "response"}
+                onChange={(e) => onUpdateConfig("outputVar", e.target.value)}
+                placeholder="response"
+                style={{ fontFamily: "monospace", fontSize: 12 }}
+              />
+              <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 4 }}>
+                Resposta JSON salva no contexto como esta variável
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
 }
 
 // ─── Variable Node Config ─────────────────────────────────────────────────────
