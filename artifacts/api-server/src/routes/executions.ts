@@ -232,6 +232,68 @@ except Exception as _e:
 `;
 }
 
+// ─── Output type coercion (applied after every node run) ─────────────────────
+
+function castOutputType(value: unknown, targetType: string): unknown {
+  switch (targetType) {
+    case "str":
+      return typeof value === "string" ? value : JSON.stringify(value);
+
+    case "int": {
+      const n = Number(value);
+      if (Number.isFinite(n)) return Math.trunc(n);
+      const parsed = parseInt(String(value).trim(), 10);
+      return Number.isNaN(parsed) ? 0 : parsed;
+    }
+
+    case "float": {
+      const n = parseFloat(String(value));
+      return Number.isNaN(n) ? 0.0 : n;
+    }
+
+    case "list":
+      if (Array.isArray(value)) return value;
+      if (typeof value === "string") {
+        try { const p = JSON.parse(value); if (Array.isArray(p)) return p; } catch {}
+      }
+      if (value !== null && typeof value === "object") return Object.values(value as object);
+      return value === null || value === undefined ? [] : [value];
+
+    case "dict":
+      if (value !== null && typeof value === "object" && !Array.isArray(value)) return value;
+      if (typeof value === "string") {
+        try { const p = JSON.parse(value); if (p !== null && typeof p === "object" && !Array.isArray(p)) return p; } catch {}
+      }
+      if (Array.isArray(value)) return Object.fromEntries((value as unknown[]).map((v, i) => [String(i), v]));
+      return { value };
+
+    case "dataframe":
+      // Always produce list-of-records (JSON-serializable DataFrame)
+      if (Array.isArray(value)) {
+        if (value.length === 0) return [];
+        // array of arrays (matrix) → convert to records with index keys
+        if (Array.isArray(value[0])) {
+          return (value as unknown[][]).map((row) =>
+            Object.fromEntries(row.map((v, i) => [String(i), v]))
+          );
+        }
+        // array of primitives → wrap each
+        if (typeof value[0] !== "object" || value[0] === null) {
+          return (value as unknown[]).map((v, i) => ({ index: i, value: v }));
+        }
+        return value; // already list of records
+      }
+      if (typeof value === "string") {
+        try { const p = JSON.parse(value); return castOutputType(p, "dataframe"); } catch {}
+      }
+      if (value !== null && typeof value === "object") return [value];
+      return [{ value }];
+
+    default:
+      return value;
+  }
+}
+
 // ─── HTTP Request Script Builder ─────────────────────────────────────────────
 
 function buildHttpRequestScript(
@@ -1113,6 +1175,7 @@ async function runWorkflow({
           const _indented = userCode.trim() === ""
             ? "    pass"
             : userCode.split("\n").map((l) => "    " + l).join("\n");
+          const codeOutputType = (nodeConfig.outputType as string | undefined) ?? "auto";
           const wrappedCode = [
             "import json as _json",
             `with open(${JSON.stringify(pipelineFile)}) as _f: pipeline = _json.load(_f)`,
@@ -1121,15 +1184,59 @@ async function runWorkflow({
             "def _node_code(pipeline, workflow):",
             _indented,
             "",
+            "def _cast_output(val, target):",
+            "    if target == 'auto': return val",
+            "    if target == 'str': return str(val)",
+            "    if target == 'int':",
+            "        try: return int(val)",
+            "        except: return 0",
+            "    if target == 'float':",
+            "        try: return float(val)",
+            "        except: return 0.0",
+            "    if target == 'list':",
+            "        if isinstance(val, list): return val",
+            "        if isinstance(val, (tuple, set, frozenset)): return list(val)",
+            "        if isinstance(val, str):",
+            "            try:",
+            "                p = _json.loads(val)",
+            "                return p if isinstance(p, list) else [p]",
+            "            except: pass",
+            "        if isinstance(val, dict): return list(val.values())",
+            "        return [val]",
+            "    if target == 'dict':",
+            "        if isinstance(val, dict): return val",
+            "        if isinstance(val, str):",
+            "            try:",
+            "                p = _json.loads(val)",
+            "                return p if isinstance(p, dict) else {'value': p}",
+            "            except: pass",
+            "        if isinstance(val, (list, tuple)): return {str(i): v for i, v in enumerate(val)}",
+            "        return {'value': val}",
+            "    if target == 'dataframe':",
+            "        try:",
+            "            import pandas as _pd",
+            "            if isinstance(val, _pd.DataFrame): return val.to_dict(orient='records')",
+            "            if isinstance(val, _pd.Series): return val.reset_index().to_dict(orient='records')",
+            "        except ImportError: pass",
+            "        if isinstance(val, list):",
+            "            if val and isinstance(val[0], (list, tuple)):",
+            "                return [{str(i): v for i, v in enumerate(row)} for row in val]",
+            "            return val",
+            "        if isinstance(val, dict): return [val]",
+            "        return [{'value': val}]",
+            "    return val",
+            "",
+            `_output_type = ${JSON.stringify(codeOutputType)}`,
             "_node_result = _node_code(pipeline, workflow)",
             "if isinstance(_node_result, dict):",
-            "    pipeline.update(_node_result)",
+            "    for _k, _v in _node_result.items():",
+            "        pipeline[_k] = _cast_output(_v, _output_type) if _output_type != 'auto' else _v",
             "elif isinstance(_node_result, (set, frozenset)):",
             "    import sys as _sys",
             "    print(f'[aviso] return retornou um set {_node_result!r}. Use return {{\"chave\": valor}} para retornar um dict.', file=_sys.stderr)",
             "    pipeline['output'] = sorted(list(_node_result), key=str)",
             "elif _node_result is not None:",
-            "    pipeline['output'] = _node_result",
+            "    pipeline['output'] = _cast_output(_node_result, _output_type)",
             "",
             "def _to_json_safe(v):",
             "    if isinstance(v, dict): return {str(k): _to_json_safe(u) for k, u in v.items()}",
@@ -2065,6 +2172,7 @@ except Exception as e:
 
       // ── Universal nodeOutputVar: capture pipeline diff at named key ──
       const universalOutputVar = (nodeConfig.nodeOutputVar as string | undefined)?.trim();
+      const outputType = ((nodeConfig.outputType as string | undefined) ?? "auto").trim();
       if (universalOutputVar && success) {
         const beforePipeline = inputSnapshot.pipeline as Record<string, unknown>;
         const changedEntries: Record<string, unknown> = {};
@@ -2075,10 +2183,28 @@ except Exception as e:
             changedEntries[k] = v;
           }
         }
+        let capturedValue: unknown;
         if (Object.keys(changedEntries).length === 1) {
-          pipelineContext[universalOutputVar] = Object.values(changedEntries)[0];
+          capturedValue = Object.values(changedEntries)[0];
         } else if (Object.keys(changedEntries).length > 1) {
-          pipelineContext[universalOutputVar] = changedEntries;
+          capturedValue = changedEntries;
+        }
+        if (capturedValue !== undefined) {
+          pipelineContext[universalOutputVar] = outputType !== "auto"
+            ? castOutputType(capturedValue, outputType)
+            : capturedValue;
+        }
+      }
+
+      // ── outputType cast on explicit pipeline key (no universalOutputVar) ──
+      if (!universalOutputVar && outputType !== "auto" && success) {
+        // Cast all pipeline keys that changed (best-effort for non-code nodes)
+        const beforePipeline = inputSnapshot.pipeline as Record<string, unknown>;
+        for (const [k, v] of Object.entries(pipelineContext)) {
+          const prevVal = beforePipeline[k];
+          if (!(k in beforePipeline) || JSON.stringify(prevVal) !== JSON.stringify(v)) {
+            pipelineContext[k] = castOutputType(v, outputType);
+          }
         }
       }
 

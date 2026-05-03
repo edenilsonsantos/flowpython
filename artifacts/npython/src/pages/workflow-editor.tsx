@@ -1697,6 +1697,16 @@ function NodeConfigPanel({
             placeholder="Ex: meu_resultado  (opcional)"
             style={{ fontSize: 12, fontFamily: "monospace" }}
           />
+
+          {/* Output Type selector — always visible when outputVar is set */}
+          {(cfg.nodeOutputVar as string)?.trim() && (
+            <OutputTypeSelector
+              value={(cfg.outputType as string) ?? "auto"}
+              onChange={(v) => onUpdateConfig("outputType", v)}
+              isCodeNode={type === "code"}
+            />
+          )}
+
           {(cfg.nodeOutputVar as string)?.trim() && (
             <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 5, lineHeight: 1.5 }}>
               Após execução: <code style={{ color: "#34d399", background: "rgba(52,211,153,0.1)", padding: "1px 5px", borderRadius: 3 }}>
@@ -2662,6 +2672,80 @@ function DatabaseNodeConfig({
           Necessário: <strong>{dbMeta.installPkg}</strong>. Use o nodo <strong>Pip Packages</strong> (ação Install) antes deste nodo se não instalado.
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+const OUTPUT_TYPES = [
+  { value: "auto",      label: "Auto",      desc: "Detecta o tipo automaticamente; usa str como fallback", color: "#94a3b8" },
+  { value: "str",       label: "str",       desc: "Converte para string (str)",                            color: "#60a5fa" },
+  { value: "int",       label: "int",       desc: "Converte para inteiro (trunca decimais)",               color: "#34d399" },
+  { value: "float",     label: "float",     desc: "Converte para número decimal (float)",                  color: "#a78bfa" },
+  { value: "list",      label: "list",      desc: "Garante que a saída seja uma lista Python",             color: "#fb923c" },
+  { value: "dict",      label: "dict",      desc: "Garante que a saída seja um dicionário",                color: "#f472b6" },
+  { value: "dataframe", label: "DataFrame", desc: "Converte para lista de registros (pd.DataFrame → JSON)",color: "#fbbf24" },
+] as const;
+
+function OutputTypeSelector({
+  value,
+  onChange,
+  isCodeNode,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  isCodeNode: boolean;
+}) {
+  const active = value || "auto";
+  const activeMeta = OUTPUT_TYPES.find((t) => t.value === active) ?? OUTPUT_TYPES[0];
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 10, fontWeight: 600, color: "hsl(var(--muted-foreground))", marginBottom: 5, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+        Tipo de dado de saída
+      </div>
+
+      {/* Pill row */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        {OUTPUT_TYPES.map((t) => {
+          const isActive = active === t.value;
+          return (
+            <button
+              key={t.value}
+              onClick={() => onChange(t.value)}
+              title={t.desc}
+              style={{
+                padding: "3px 9px",
+                borderRadius: 20,
+                border: `1.5px solid ${isActive ? t.color : "hsl(var(--border))"}`,
+                background: isActive ? `${t.color}18` : "transparent",
+                color: isActive ? t.color : "hsl(var(--muted-foreground))",
+                fontSize: 11, fontWeight: isActive ? 700 : 500,
+                cursor: "pointer", transition: "all 0.12s",
+                fontFamily: t.value !== "auto" ? "monospace" : undefined,
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Context hint */}
+      <div style={{ fontSize: 10, color: activeMeta.color, marginTop: 5, lineHeight: 1.5 }}>
+        {activeMeta.desc}
+        {active === "dataframe" && isCodeNode && (
+          <span style={{ display: "block", color: "hsl(var(--muted-foreground))", marginTop: 2 }}>
+            Retorne um <code style={{ color: "#fbbf24" }}>pd.DataFrame</code> ou lista de dicts — convertido automaticamente para JSON records.
+          </span>
+        )}
+        {active === "auto" && (
+          <span style={{ display: "block", color: "hsl(var(--muted-foreground))", marginTop: 2 }}>
+            Se não identificar, usa <code style={{ color: "#60a5fa" }}>str</code> como fallback.
+          </span>
+        )}
+      </div>
     </div>
   );
 }
