@@ -30,6 +30,12 @@ import {
   RefreshCw,
   Code2,
   Layers,
+  Table2,
+  Braces,
+  List,
+  Hash,
+  Type,
+  ToggleLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +44,7 @@ import { useToast } from "@/hooks/use-toast";
 import { CanvasNode } from "@/components/canvas-node";
 import { format } from "date-fns";
 import { useStopExecution, getGetExecutionQueryKey } from "@workspace/api-client-react";
+import { DataTableModal, isTabular } from "./data-table-modal";
 import { useQueryClient } from "@tanstack/react-query";
 
 const nodeTypes = { custom: CanvasNode };
@@ -149,6 +156,147 @@ function JsonViewer({ data, title }: { data: unknown; title?: string }) {
   );
 }
 
+// ─── Type badge helpers ───────────────────────────────────────────────────────
+
+function getTypeInfo(value: unknown): { label: string; color: string; Icon: React.ElementType } {
+  if (value === null || value === undefined) return { label: "null", color: "#6b7280", Icon: X };
+  if (Array.isArray(value)) return { label: `list[${value.length}]`, color: "#fb923c", Icon: List };
+  if (typeof value === "object") return { label: `dict[${Object.keys(value as object).length}]`, color: "#f472b6", Icon: Braces };
+  if (typeof value === "number") return { label: Number.isInteger(value) ? "int" : "float", color: "#a78bfa", Icon: Hash };
+  if (typeof value === "boolean") return { label: "bool", color: "#fb923c", Icon: ToggleLeft };
+  return { label: "str", color: "#60a5fa", Icon: Type };
+}
+
+function PipelineVarsViewer({
+  snapshot,
+  title,
+  onPreviewTable,
+}: {
+  snapshot: Record<string, unknown>;
+  title: string;
+  onPreviewTable: (varName: string, data: unknown) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const pipeline = (snapshot.pipeline ?? {}) as Record<string, unknown>;
+  const entries = Object.entries(pipeline);
+
+  return (
+    <div className="rounded-lg border border-border/40 overflow-hidden text-xs">
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-muted/30 border-b border-border/40 text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <span className="font-semibold text-[10px] uppercase tracking-wider">{title}</span>
+        <ChevronRight size={12} className={`transition-transform ${collapsed ? "" : "rotate-90"}`} />
+      </button>
+
+      {!collapsed && (
+        <div className="bg-[#0d1117]">
+          {entries.length === 0 ? (
+            <div className="px-3 py-4 text-slate-600 italic text-center">Pipeline vazio</div>
+          ) : (
+            entries.map(([key, value]) => {
+              const { label, color, Icon } = getTypeInfo(value);
+              const tabular = isTabular(value);
+              const preview =
+                value === null || value === undefined
+                  ? "null"
+                  : Array.isArray(value)
+                  ? `[${value.length} itens]`
+                  : typeof value === "object"
+                  ? `{${Object.keys(value as object).length} chaves}`
+                  : String(value).slice(0, 120);
+
+              return (
+                <div
+                  key={key}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "7px 10px",
+                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                  }}
+                >
+                  {/* Type badge */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 3,
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      background: `${color}14`,
+                      border: `1px solid ${color}30`,
+                      flexShrink: 0,
+                      minWidth: 56,
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Icon size={9} color={color} />
+                    <span style={{ fontSize: 9, fontWeight: 700, color, fontFamily: "monospace" }}>{label}</span>
+                  </div>
+
+                  {/* Key */}
+                  <code style={{ fontSize: 11, color: "#34d399", flexShrink: 0, minWidth: 90 }}>
+                    {key}
+                  </code>
+
+                  {/* Value preview */}
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: "#94a3b8",
+                      fontFamily: "monospace",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      flex: 1,
+                    }}
+                  >
+                    {preview}
+                  </span>
+
+                  {/* Preview table button */}
+                  {tabular && (
+                    <button
+                      onClick={() => onPreviewTable(key, value)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: "3px 8px",
+                        borderRadius: 5,
+                        background: "rgba(52,211,153,0.08)",
+                        border: "1px solid rgba(52,211,153,0.25)",
+                        color: "#34d399",
+                        fontSize: 10,
+                        cursor: "pointer",
+                        flexShrink: 0,
+                        fontWeight: 600,
+                        transition: "all 0.12s",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.background = "rgba(52,211,153,0.16)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.background = "rgba(52,211,153,0.08)";
+                      }}
+                    >
+                      <Table2 size={10} />
+                      Tabela
+                    </button>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LogLine({ log }: { log: DebugLog }) {
   const lvlCls: Record<string, string> = {
     error: "text-red-400",
@@ -230,7 +378,15 @@ export default function ExecutionDetail() {
   const [isSaving, setIsSaving] = useState(false);
   const [rfNodes, setRfNodes] = useState<RFNode[]>([]);
   const [rfEdges, setRfEdges] = useState<RFEdge[]>([]);
+  const [tablePreview, setTablePreview] = useState<{ varName: string; data: unknown } | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Esc closes table preview
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setTablePreview(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const loadDebugData = useCallback(async (): Promise<DebugData | undefined> => {
     if (!id) return undefined;
@@ -593,14 +749,28 @@ export default function ExecutionDetail() {
                 ) : null}
 
                 {selectedNodeResult?.outputSnapshot !== undefined && (
-                  <JsonViewer data={selectedNodeResult.outputSnapshot} title="Contexto do pipeline após execução" />
+                  <>
+                    <PipelineVarsViewer
+                      snapshot={selectedNodeResult.outputSnapshot as Record<string, unknown>}
+                      title="Variáveis do pipeline após execução"
+                      onPreviewTable={(varName, data) => setTablePreview({ varName, data })}
+                    />
+                    <JsonViewer data={selectedNodeResult.outputSnapshot} title="JSON completo (pipeline + workflow)" />
+                  </>
                 )}
               </TabsContent>
 
               {/* INPUT tab */}
               <TabsContent value="input" className="flex-1 overflow-y-auto px-3 pb-3 mt-2 space-y-3">
                 {selectedNodeResult?.inputSnapshot !== undefined ? (
-                  <JsonViewer data={selectedNodeResult.inputSnapshot} title="Contexto do pipeline antes da execução" />
+                  <>
+                    <PipelineVarsViewer
+                      snapshot={selectedNodeResult.inputSnapshot as Record<string, unknown>}
+                      title="Variáveis do pipeline antes da execução"
+                      onPreviewTable={(varName, data) => setTablePreview({ varName, data })}
+                    />
+                    <JsonViewer data={selectedNodeResult.inputSnapshot} title="JSON completo (pipeline + workflow)" />
+                  </>
                 ) : (
                   <div className="text-xs text-muted-foreground italic text-center py-6">
                     Snapshot de entrada não disponível.<br />
@@ -692,6 +862,15 @@ export default function ExecutionDetail() {
 
       {/* ── Global logs drawer (bottom, always visible) ── */}
       <GlobalLogs logs={debugData.logs.filter((l) => !l.nodeId)} />
+
+      {/* ── Data table preview modal ── */}
+      {tablePreview && (
+        <DataTableModal
+          data={tablePreview.data}
+          varName={tablePreview.varName}
+          onClose={() => setTablePreview(null)}
+        />
+      )}
     </div>
   );
 }
