@@ -9,6 +9,229 @@ import fs from "fs/promises";
 
 const router = Router();
 
+// ─── Database Script Builder ──────────────────────────────────────────────────
+
+function buildDbScript(
+  dbType: string,
+  operation: string,
+  config: Record<string, unknown>,
+  pipelineCtx: Record<string, unknown>,
+  workflowCtx: Record<string, unknown>
+): string {
+  const ctx = { ...workflowCtx, ...pipelineCtx };
+  const ctxJson = JSON.stringify(ctx);
+
+  type DbField = { column: string; value: string; enabled: boolean };
+  const getFields = (key: string): DbField[] =>
+    ((config[key] ?? []) as DbField[]).filter(
+      (f) => f.enabled !== false && String(f.column ?? "").trim() !== ""
+    );
+
+  const S = (k: string, def = "") => String(config[k] ?? def).replace(/\\/g, "\\\\").replace(/\n/g, " ").replace(/\r/g, "");
+  const N = (k: string, def: number) => Number(config[k] ?? def);
+  const B = (k: string) => config[k] === true;
+
+  const table    = S("table", "table");
+  const useConnStr = B("useConnectionString");
+  const connStr  = S("connectionString");
+  const host     = S("host", "localhost");
+  const port     = N("port", dbType === "pg" ? 5432 : dbType === "mysql" ? 3306 : dbType === "mssql" ? 1433 : 1521);
+  const dbName   = S("dbName");
+  const user     = S("user");
+  const pass     = String(config.password ?? "").replace(/\\/g, "\\\\").replace(/\n/g, "").replace(/"/g, '\\"');
+
+  const selectCols = S("selectColumns", "*");
+  const whereClause = S("whereClause");
+  const orderBy  = S("orderBy");
+  const limit    = N("limit", 100);
+  const whereCol = S("whereColumn");
+  const whereVal = S("whereValue");
+  const checkCol = S("checkColumn");
+  const checkVal = S("checkValue");
+
+  const fields       = getFields("fields");
+  const insertFields = getFields("insertFields");
+  const updateFields = getFields("updateFields");
+
+  const pyCol = (c: string) => c.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+  // Field dict builder (Python dict literal)
+  const fd = (flds: DbField[]) => {
+    if (flds.length === 0) return "{}";
+    return `{\n${flds.map(f => `        "${pyCol(f.column)}": _r(${JSON.stringify(f.value)})`).join(",\n")}\n    }`;
+  };
+
+  // Placeholder helpers
+  const phs = (n: number): string => {
+    if (dbType === "mssql")  return Array(n).fill("?").join(", ");
+    if (dbType === "oracle") return Array.from({ length: n }, (_, i) => `:${i + 1}`).join(", ");
+    return Array(n).fill("%s").join(", ");
+  };
+  const setPhs = (flds: DbField[]) =>
+    flds.map((f, i) => {
+      const ph = dbType === "mssql" ? "?" : dbType === "oracle" ? `:${i + 1}` : "%s";
+      return `"${pyCol(f.column)}" = ${ph}`;
+    }).join(", ");
+  const wherePh = (offset = 0) =>
+    dbType === "mssql" ? "?" : dbType === "oracle" ? `:${offset + 1}` : "%s";
+
+  const preamble = `import json as _j, sys as _sys
+_pipeline = _j.loads(${JSON.stringify(ctxJson)})
+
+def _r(v):
+    s = str(v) if v is not None else ""
+    try: return _j.loads(s)
+    except Exception: pass
+    try:
+        _ctx = {"pipeline": _pipeline}; _ctx.update(_pipeline)
+        _b = {"True": True, "False": False, "None": None, "str": str, "int": int, "float": float, "bool": bool, "len": len}
+        return eval(s, {"__builtins__": _b}, _ctx)
+    except Exception: return v
+`;
+
+  // ── Supabase (REST API via requests) ──────────────────────────
+  if (dbType === "supabase") {
+    const url = S("supabaseUrl");
+    const key = String(config.supabaseKey ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    let body = "";
+
+    if (operation === "select") {
+      body = `    _p = {"select": "${selectCols}", "limit": "${limit}"}
+    _res = _ses.get("${url}/rest/v1/${table}", params=_p); _res.raise_for_status()
+    _d = _res.json()
+    print(f"Encontrados {len(_d)} registro(s) em '${table}'")\n    print(_j.dumps(_d, ensure_ascii=False, default=str))`;
+    } else if (operation === "insert") {
+      body = `    _fd = ${fd(fields)}\n    _res = _ses.post("${url}/rest/v1/${table}", json=_fd, headers={"Prefer": "return=representation"}); _res.raise_for_status()\n    print(_j.dumps({"inserted": _res.json(), "success": True}))`;
+    } else if (operation === "update") {
+      body = `    _fd = ${fd(fields)}; _wv = _r(${JSON.stringify(whereVal)})\n    _res = _ses.patch("${url}/rest/v1/${table}", json=_fd, params={"${whereCol}": f"eq.{_wv}"}, headers={"Prefer": "return=representation"}); _res.raise_for_status()\n    print(_j.dumps({"updated": _res.json(), "success": True}))`;
+    } else if (operation === "delete") {
+      body = `    _wv = _r(${JSON.stringify(whereVal)})\n    _res = _ses.delete("${url}/rest/v1/${table}", params={"${whereCol}": f"eq.{_wv}"}, headers={"Prefer": "return=representation"}); _res.raise_for_status()\n    print(_j.dumps({"deleted": _res.json(), "success": True}))`;
+    } else if (operation === "upsert") {
+      body = `    _cv = _r(${JSON.stringify(checkVal)})
+    _chk = _ses.get("${url}/rest/v1/${table}", params={"${checkCol}": f"eq.{_cv}", "limit": "1"}); _chk.raise_for_status()
+    if _chk.json():
+        _fd = ${fd(updateFields)}
+        _res = _ses.patch("${url}/rest/v1/${table}", json=_fd, params={"${checkCol}": f"eq.{_cv}"}, headers={"Prefer": "return=representation"}); _res.raise_for_status()
+        print(_j.dumps({"action": "update", "result": _res.json(), "success": True}))
+    else:
+        _fd = ${fd(insertFields)}
+        _res = _ses.post("${url}/rest/v1/${table}", json=_fd, headers={"Prefer": "return=representation"}); _res.raise_for_status()
+        print(_j.dumps({"action": "insert", "result": _res.json(), "success": True}))`;
+    }
+
+    return `import requests as _rq, json as _j, sys as _sys\n${preamble}\ntry:\n    _ses = _rq.Session()\n    _ses.headers.update({"apikey": "${key}", "Authorization": "Bearer ${key}", "Content-Type": "application/json", "Accept": "application/json"})\n${body}\nexcept Exception as _e:\n    print(str(_e), file=_sys.stderr); _sys.exit(1)\n`;
+  }
+
+  // ── SQL-based DBs ────────────────────────────────────────────
+  let importLine = "";
+  let connCode = "";
+
+  if (dbType === "pg") {
+    importLine = "import psycopg2 as _db, json as _j, sys as _sys";
+    connCode = useConnStr && connStr
+      ? `    _conn = _db.connect("${connStr.replace(/"/g, '\\"')}")`
+      : `    _conn = _db.connect(host="${host}", port=${port}, dbname="${dbName}", user="${user}", password="${pass}")`;
+  } else if (dbType === "mysql") {
+    importLine = "import pymysql as _db, json as _j, sys as _sys";
+    if (useConnStr && connStr) {
+      connCode = `    from urllib.parse import urlparse as _up\n    _pu = _up("${connStr.replace(/"/g, '\\"')}")\n    _conn = _db.connect(host=_pu.hostname or "localhost", port=_pu.port or 3306, database=(_pu.path or "/").lstrip("/"), user=_pu.username or "", password=_pu.password or "", charset="utf8mb4")`;
+    } else {
+      connCode = `    _conn = _db.connect(host="${host}", port=${port}, database="${dbName}", user="${user}", password="${pass}", charset="utf8mb4")`;
+    }
+  } else if (dbType === "mssql") {
+    importLine = "import pyodbc as _db, json as _j, sys as _sys";
+    const cs = connStr || `DRIVER={ODBC Driver 17 for SQL Server};SERVER=${host},${port};DATABASE=${dbName};UID=${user};PWD=${pass}`;
+    connCode = `    _conn = _db.connect("${cs.replace(/"/g, '\\"')}")`;
+  } else if (dbType === "oracle") {
+    importLine = "import oracledb as _db, json as _j, sys as _sys";
+    connCode = useConnStr && connStr
+      ? `    _conn = _db.connect(dsn="${connStr.replace(/"/g, '\\"')}")`
+      : `    _conn = _db.connect(user="${user}", password="${pass}", dsn="${host}:${port}/${dbName}")`;
+  }
+
+  let opBody = "";
+
+  if (operation === "select") {
+    const w = whereClause ? ` WHERE ${whereClause}` : "";
+    const o = orderBy ? ` ORDER BY ${orderBy}` : "";
+    opBody = `    _sql = "SELECT ${selectCols} FROM ${table}${w}${o} LIMIT ${limit}"
+    _cur.execute(_sql)
+    _cols = [d[0] for d in _cur.description]
+    _rows = _cur.fetchall()
+    _result = [dict(zip(_cols, row)) for row in _rows]
+    _conn.close()
+    print(f"Encontrados {len(_result)} registro(s) em '${table}'")
+    print(_j.dumps(_result, ensure_ascii=False, default=str))`;
+
+  } else if (operation === "insert") {
+    if (fields.length === 0) {
+      opBody = `    raise ValueError("Nenhum campo definido para INSERT. Adicione campos no painel do nodo.")`;
+    } else {
+      opBody = `    _fd = ${fd(fields)}
+    _cols = list(_fd.keys()); _vals = list(_fd.values())
+    _sql = f"INSERT INTO ${table} ({{', '.join(_cols)}}) VALUES (${phs(fields.length)})"
+    _cur.execute(_sql, _vals)
+    _rc = _cur.rowcount; _conn.commit(); _conn.close()
+    print(f"Inserido {_rc} registro(s) em '${table}'")\n    print(_j.dumps({"inserted": _rc, "success": True}))`;
+    }
+
+  } else if (operation === "update") {
+    if (fields.length === 0) {
+      opBody = `    raise ValueError("Nenhum campo definido para UPDATE. Adicione campos no painel do nodo.")`;
+    } else {
+      opBody = `    _fd = ${fd(fields)}
+    _wv = _r(${JSON.stringify(whereVal)})
+    _vals = list(_fd.values()) + [_wv]
+    _sql = "UPDATE ${table} SET ${setPhs(fields)} WHERE ${whereCol} = ${wherePh(fields.length)}"
+    _cur.execute(_sql, _vals)
+    _rc = _cur.rowcount; _conn.commit(); _conn.close()
+    print(f"Atualizado {_rc} registro(s) em '${table}'")\n    print(_j.dumps({"updated": _rc, "success": True}))`;
+    }
+
+  } else if (operation === "delete") {
+    opBody = `    _wv = _r(${JSON.stringify(whereVal)})
+    _sql = "DELETE FROM ${table} WHERE ${whereCol} = ${wherePh(0)}"
+    _cur.execute(_sql, [_wv])
+    _rc = _cur.rowcount; _conn.commit(); _conn.close()
+    print(f"Removido {_rc} registro(s) de '${table}'")\n    print(_j.dumps({"deleted": _rc, "success": True}))`;
+
+  } else if (operation === "upsert") {
+    const chkPh = wherePh(0);
+    const updPh = wherePh(updateFields.length);
+    opBody = `    _cv = _r(${JSON.stringify(checkVal)})
+    _cur.execute("SELECT 1 FROM ${table} WHERE ${checkCol} = ${chkPh}", [_cv])
+    _exists = _cur.fetchone() is not None
+    if _exists:
+        _fd = ${fd(updateFields)}
+        if not _fd: raise ValueError("Nenhum campo para atualizar definido no upsert.")
+        _vals = list(_fd.values()) + [_cv]
+        _sql = "UPDATE ${table} SET ${setPhs(updateFields)} WHERE ${checkCol} = ${updPh}"
+        _cur.execute(_sql, _vals); _rc = _cur.rowcount; _conn.commit(); _conn.close()
+        print(f"Insert or Update → Update: {_rc} registro(s) em '${table}'")\n        print(_j.dumps({"action": "update", "updated": _rc, "success": True}))
+    else:
+        _fd = ${fd(insertFields)}
+        if not _fd: raise ValueError("Nenhum campo para inserir definido no upsert.")
+        _cols = list(_fd.keys()); _vals = list(_fd.values())
+        _sql = f"INSERT INTO ${table} ({{', '.join(_cols)}}) VALUES (${phs(insertFields.length)})"
+        _cur.execute(_sql, _vals); _rc = _cur.rowcount; _conn.commit(); _conn.close()
+        print(f"Insert or Update → Insert: {_rc} registro(s) em '${table}'")\n        print(_j.dumps({"action": "insert", "inserted": _rc, "success": True}))`;
+  }
+
+  const errPkg = dbType === "pg" ? "psycopg2-binary" : dbType === "mysql" ? "pymysql" : dbType === "mssql" ? "pyodbc" : "oracledb";
+
+  return `${importLine}
+${preamble}
+try:
+${connCode}
+    _cur = _conn.cursor()
+    ${opBody}
+except ImportError as _ie:
+    print(f"Biblioteca não instalada: {_ie}. Use Pip Packages para instalar '${errPkg}'.", file=_sys.stderr); _sys.exit(1)
+except Exception as _e:
+    print(str(_e), file=_sys.stderr); _sys.exit(1)
+`;
+}
+
 // ─── HTTP Request Script Builder ─────────────────────────────────────────────
 
 function buildHttpRequestScript(
@@ -1110,6 +1333,63 @@ async function runWorkflow({
                 pipelineContext[outputVar] = JSON.parse(result.output.slice(jsonStart));
               }
             } catch { /* not JSON, that's fine */ }
+          }
+
+          if (output) await addLog(executionId, node.id, "info", output.trim());
+          if (error) await addLog(executionId, node.id, "error", error.trim());
+
+        } else if (/^(pg|mysql|mssql|oracle|supabase)_(select|insert|update|delete|upsert)$/.test(node.type as string)) {
+          // ── Database Node ─────────────────────────────────────────
+          const dbMatch = (node.type as string).match(/^(pg|mysql|mssql|oracle|supabase)_(select|insert|update|delete|upsert)$/)!;
+          const dbType = dbMatch[1];
+          const dbOp = dbMatch[2];
+          const config = node.config as Record<string, unknown>;
+          const script = buildDbScript(dbType, dbOp, config, pipelineContext, workflowContext);
+
+          const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "npython-db-"));
+          const scriptPath = path.join(tmpDir, "db.py");
+          await fs.writeFile(scriptPath, script, "utf8");
+
+          const venvPython = path.join(venovsDir, workflowId, "bin", "python3");
+          let pythonBin = "python3";
+          try { await fs.access(venvPython); pythonBin = venvPython; } catch {}
+
+          const result = await new Promise<{ success: boolean; output: string; error: string | null }>(
+            (resolve) => {
+              const proc = spawn(pythonBin, [scriptPath], { timeout: 60000 });
+              runningProcesses.set(executionId, proc);
+              let stdout = "";
+              let stderr = "";
+              proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+              proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+              proc.on("close", (code) => {
+                runningProcesses.delete(executionId);
+                if (code === 0) resolve({ success: true, output: stdout, error: null });
+                else resolve({ success: false, output: stdout, error: stderr || `Exit code ${code}` });
+              });
+              proc.on("error", (err) => {
+                runningProcesses.delete(executionId);
+                resolve({ success: false, output: "", error: err.message });
+              });
+            }
+          );
+
+          await fs.rm(tmpDir, { recursive: true, force: true });
+
+          success = result.success;
+          output = result.output;
+          error = result.error;
+
+          if (result.success) {
+            const outputVar = (config.outputVar as string) || "result";
+            try {
+              const lines = result.output.split("\n");
+              const jsonLine = lines.find((l) => l.trim().startsWith("{") || l.trim().startsWith("["));
+              if (jsonLine) {
+                const jsonStart = result.output.indexOf(jsonLine);
+                pipelineContext[outputVar] = JSON.parse(result.output.slice(jsonStart));
+              }
+            } catch { /* not JSON */ }
           }
 
           if (output) await addLog(executionId, node.id, "info", output.trim());

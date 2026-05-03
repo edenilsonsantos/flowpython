@@ -1,10 +1,11 @@
-export type NodeCategory = "trigger" | "logic" | "transform" | "variables" | "data" | "integration" | "utility";
+export type NodeCategory = "trigger" | "logic" | "transform" | "variables" | "data" | "integration" | "utility" | "database";
 
 export interface NodeDef {
   type: string;
   label: string;
   description: string;
   category: NodeCategory;
+  subCategory?: string;
   iconName: string;
   color: string;
   defaultConfig: Record<string, unknown>;
@@ -13,13 +14,14 @@ export interface NodeDef {
 }
 
 export const NODE_CATEGORY_META: Record<NodeCategory, { label: string; color: string; bg: string }> = {
-  trigger:    { label: "Trigger",    color: "#14b8a6", bg: "rgba(20,184,166,0.12)"  },
-  logic:      { label: "Logic",      color: "#a78bfa", bg: "rgba(167,139,250,0.12)" },
-  transform:  { label: "Transform",  color: "#fb923c", bg: "rgba(251,146,60,0.12)"  },
-  variables:  { label: "Variables",  color: "#34d399", bg: "rgba(52,211,153,0.12)"  },
-  data:       { label: "Data",       color: "#fbbf24", bg: "rgba(251,191,36,0.12)"  },
-  integration:{ label: "Integration",color: "#60a5fa", bg: "rgba(96,165,250,0.12)"  },
-  utility:    { label: "Utility",    color: "#94a3b8", bg: "rgba(148,163,184,0.12)" },
+  trigger:    { label: "Trigger",       color: "#14b8a6", bg: "rgba(20,184,166,0.12)"  },
+  logic:      { label: "Logic",         color: "#a78bfa", bg: "rgba(167,139,250,0.12)" },
+  transform:  { label: "Transform",     color: "#fb923c", bg: "rgba(251,146,60,0.12)"  },
+  variables:  { label: "Variables",     color: "#34d399", bg: "rgba(52,211,153,0.12)"  },
+  data:       { label: "Data",          color: "#fbbf24", bg: "rgba(251,191,36,0.12)"  },
+  integration:{ label: "Integration",   color: "#60a5fa", bg: "rgba(96,165,250,0.12)"  },
+  utility:    { label: "Utility",       color: "#94a3b8", bg: "rgba(148,163,184,0.12)" },
+  database:   { label: "Banco de Dados",color: "#10b981", bg: "rgba(16,185,129,0.12)"  },
 };
 
 export const NODE_DEFINITIONS: NodeDef[] = [
@@ -325,6 +327,73 @@ export const NODE_DEFINITIONS: NodeDef[] = [
     hasOutput: true,
   },
 
+  // ── Database ──────────────────────────────────────────────────
+  // helpers (IIFE to keep scope clean)
+  ...((() => {
+    const common = (port: number) => ({
+      useConnectionString: false,
+      connectionString: "",
+      host: "localhost",
+      port,
+      dbName: "",
+      user: "",
+      password: "",
+      table: "",
+      outputVar: "result",
+    });
+    const selectCfg = { selectColumns: "*", whereClause: "", orderBy: "", limit: 100 };
+    const insertCfg = { fields: [] as { column: string; value: string; enabled: boolean }[] };
+    const updateCfg = { fields: [] as { column: string; value: string; enabled: boolean }[], whereColumn: "", whereValue: "" };
+    const deleteCfg = { whereColumn: "", whereValue: "" };
+    const upsertCfg = { checkColumn: "", checkValue: "", insertFields: [] as { column: string; value: string; enabled: boolean }[], updateFields: [] as { column: string; value: string; enabled: boolean }[] };
+
+    const supBase = {
+      supabaseUrl: "",
+      supabaseKey: "",
+      table: "",
+      outputVar: "result",
+    };
+
+    const mk = (type: string, label: string, desc: string, sub: string, color: string, icon: string, cfg: Record<string, unknown>): NodeDef => ({
+      type, label, description: desc, category: "database", subCategory: sub,
+      iconName: icon, color, defaultConfig: cfg, hasInput: true, hasOutput: true,
+    });
+
+    const PG = "#336791", MY = "#00758F", MS = "#CC2927", OR = "#C74634", SB = "#3ECF8E";
+    return [
+      // PostgreSQL
+      mk("pg_select",  "Select",          "Consulta registros no PostgreSQL",       "PostgreSQL",  PG, "Search",    { ...common(5432), ...selectCfg }),
+      mk("pg_insert",  "Insert",          "Insere registro no PostgreSQL",           "PostgreSQL",  PG, "Plus",      { ...common(5432), ...insertCfg }),
+      mk("pg_update",  "Update",          "Atualiza registro no PostgreSQL",         "PostgreSQL",  PG, "PenLine",   { ...common(5432), ...updateCfg }),
+      mk("pg_delete",  "Delete",          "Remove registro do PostgreSQL",           "PostgreSQL",  PG, "Trash2",    { ...common(5432), ...deleteCfg }),
+      mk("pg_upsert",  "Insert or Update","Insere ou atualiza no PostgreSQL",        "PostgreSQL",  PG, "RefreshCw", { ...common(5432), ...upsertCfg }),
+      // MySQL
+      mk("mysql_select",  "Select",          "Consulta registros no MySQL",          "MySQL",  MY, "Search",    { ...common(3306), ...selectCfg }),
+      mk("mysql_insert",  "Insert",          "Insere registro no MySQL",             "MySQL",  MY, "Plus",      { ...common(3306), ...insertCfg }),
+      mk("mysql_update",  "Update",          "Atualiza registro no MySQL",           "MySQL",  MY, "PenLine",   { ...common(3306), ...updateCfg }),
+      mk("mysql_delete",  "Delete",          "Remove registro do MySQL",             "MySQL",  MY, "Trash2",    { ...common(3306), ...deleteCfg }),
+      mk("mysql_upsert",  "Insert or Update","Insere ou atualiza no MySQL",          "MySQL",  MY, "RefreshCw", { ...common(3306), ...upsertCfg }),
+      // SQL Server
+      mk("mssql_select",  "Select",          "Consulta registros no SQL Server",     "SQL Server", MS, "Search",    { ...common(1433), ...selectCfg }),
+      mk("mssql_insert",  "Insert",          "Insere registro no SQL Server",        "SQL Server", MS, "Plus",      { ...common(1433), ...insertCfg }),
+      mk("mssql_update",  "Update",          "Atualiza registro no SQL Server",      "SQL Server", MS, "PenLine",   { ...common(1433), ...updateCfg }),
+      mk("mssql_delete",  "Delete",          "Remove registro do SQL Server",        "SQL Server", MS, "Trash2",    { ...common(1433), ...deleteCfg }),
+      mk("mssql_upsert",  "Insert or Update","Insere ou atualiza no SQL Server",     "SQL Server", MS, "RefreshCw", { ...common(1433), ...upsertCfg }),
+      // Oracle
+      mk("oracle_select",  "Select",          "Consulta registros no Oracle",        "Oracle", OR, "Search",    { ...common(1521), ...selectCfg }),
+      mk("oracle_insert",  "Insert",          "Insere registro no Oracle",           "Oracle", OR, "Plus",      { ...common(1521), ...insertCfg }),
+      mk("oracle_update",  "Update",          "Atualiza registro no Oracle",         "Oracle", OR, "PenLine",   { ...common(1521), ...updateCfg }),
+      mk("oracle_delete",  "Delete",          "Remove registro do Oracle",           "Oracle", OR, "Trash2",    { ...common(1521), ...deleteCfg }),
+      mk("oracle_upsert",  "Insert or Update","Insere ou atualiza no Oracle",        "Oracle", OR, "RefreshCw", { ...common(1521), ...upsertCfg }),
+      // Supabase
+      mk("supabase_select",  "Select",          "Consulta registros no Supabase",    "Supabase", SB, "Search",    { ...supBase, ...selectCfg }),
+      mk("supabase_insert",  "Insert",          "Insere registro no Supabase",       "Supabase", SB, "Plus",      { ...supBase, ...insertCfg }),
+      mk("supabase_update",  "Update",          "Atualiza registro no Supabase",     "Supabase", SB, "PenLine",   { ...supBase, ...updateCfg }),
+      mk("supabase_delete",  "Delete",          "Remove registro do Supabase",       "Supabase", SB, "Trash2",    { ...supBase, ...deleteCfg }),
+      mk("supabase_upsert",  "Insert or Update","Insere ou atualiza no Supabase",    "Supabase", SB, "RefreshCw", { ...supBase, ...upsertCfg }),
+    ];
+  })()),
+
   // ── Utility ───────────────────────────────────────────────────
   {
     type: "pip_install",
@@ -364,6 +433,31 @@ export function getNodeDef(type: string): NodeDef | undefined {
 export function isTriggerType(type: string): boolean {
   return type.startsWith("trigger_");
 }
+
+export function isDatabaseNodeType(type: string): boolean {
+  return /^(pg|mysql|mssql|oracle|supabase)_(select|insert|update|delete|upsert)$/.test(type);
+}
+
+export function parseDbNodeType(type: string): { dbType: string; operation: string } | null {
+  const m = type.match(/^(pg|mysql|mssql|oracle|supabase)_(select|insert|update|delete|upsert)$/);
+  return m ? { dbType: m[1], operation: m[2] } : null;
+}
+
+export const DB_META: Record<string, { label: string; color: string; defaultPort: number; lib: string; installPkg: string }> = {
+  pg:       { label: "PostgreSQL", color: "#336791", defaultPort: 5432, lib: "psycopg2",  installPkg: "psycopg2-binary" },
+  mysql:    { label: "MySQL",      color: "#00758F", defaultPort: 3306, lib: "pymysql",   installPkg: "pymysql" },
+  mssql:    { label: "SQL Server", color: "#CC2927", defaultPort: 1433, lib: "pyodbc",    installPkg: "pyodbc" },
+  oracle:   { label: "Oracle",     color: "#C74634", defaultPort: 1521, lib: "oracledb",  installPkg: "oracledb" },
+  supabase: { label: "Supabase",   color: "#3ECF8E", defaultPort: 0,    lib: "requests",  installPkg: "requests" },
+};
+
+export const DB_OP_META: Record<string, { label: string; color: string }> = {
+  select: { label: "Select",          color: "#60a5fa" },
+  insert: { label: "Insert",          color: "#34d399" },
+  update: { label: "Update",          color: "#f59e0b" },
+  delete: { label: "Delete",          color: "#ef4444" },
+  upsert: { label: "Insert or Update",color: "#a78bfa" },
+};
 
 export const VARIABLE_SCOPES = [
   {

@@ -6,6 +6,7 @@ import executionsRouter from "./executions";
 import variablesRouter from "./variables";
 import credentialsRouter from "./credentials";
 import packagesRouter from "./packages";
+import databaseRouter from "./database";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(executionsRouter);
 router.use(variablesRouter);
 router.use(credentialsRouter);
 router.use(packagesRouter);
+router.use(databaseRouter);
 
 export default router;

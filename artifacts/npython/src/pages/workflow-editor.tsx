@@ -33,7 +33,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   ArrowLeft, Play, Save, Settings, X, Trash2, AlertTriangle,
   FlaskConical, Pin, PinOff, CheckCircle2, XCircle, Loader2, Plus, Package,
-  Eye, EyeOff, Lock, ShieldOff, Shield,
+  Eye, EyeOff, Lock, ShieldOff, Shield, Database,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -44,7 +44,7 @@ import { python } from "@codemirror/lang-python";
 import { CanvasNode } from "@/components/canvas-node";
 import { EdgeWithDelete } from "@/components/edge-with-delete";
 import { NodePalette } from "@/components/node-palette";
-import { NodeDef, getNodeDef, isTriggerType, VARIABLE_SCOPES } from "@/lib/node-definitions";
+import { NodeDef, getNodeDef, isTriggerType, isDatabaseNodeType, parseDbNodeType, DB_META, DB_OP_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
 import {
   useListVariables,
 } from "@workspace/api-client-react";
@@ -533,6 +533,10 @@ function NodeConfigPanel({
         type === "split_out" || type === "sort_list" || type === "remove_duplicates" ||
         type === "limit") && (
         <DataNodeConfig nodeType={type} cfg={cfg} onUpdateConfig={onUpdateConfig} />
+      )}
+
+      {isDatabaseNodeType(type) && (
+        <DatabaseNodeConfig nodeType={type} cfg={cfg} onUpdateConfig={onUpdateConfig} />
       )}
 
       {/* ── Pin / Mock Data section ──────────────────────────────── */}
@@ -1161,6 +1165,307 @@ function KeyValueEditor({
     </div>
   );
 }
+
+// ─── Database Node Config ──────────────────────────────────────────────────────
+
+interface DbField { column: string; value: string; enabled: boolean; }
+
+function DatabaseNodeConfig({
+  nodeType,
+  cfg,
+  onUpdateConfig,
+}: {
+  nodeType: string;
+  cfg: Record<string, unknown>;
+  onUpdateConfig: (k: string, v: unknown) => void;
+}) {
+  const parsed = parseDbNodeType(nodeType);
+  if (!parsed) return null;
+  const { dbType, operation } = parsed;
+  const dbMeta = DB_META[dbType];
+  const opMeta = DB_OP_META[operation];
+
+  const [fetchedColumns, setFetchedColumns] = useState<string[]>([]);
+  const [fetchingCols, setFetchingCols] = useState(false);
+  const [fetchColsError, setFetchColsError] = useState("");
+
+  const isSupabase = dbType === "supabase";
+
+  const str = (key: string, def = "") => (cfg[key] as string) ?? def;
+  const num = (key: string, def: number) => Number(cfg[key] ?? def);
+  const bool = (key: string, def = false) => (cfg[key] as boolean) ?? def;
+  const arr = (key: string): DbField[] => (cfg[key] as DbField[]) ?? [];
+
+  const handleFetchColumns = async () => {
+    setFetchingCols(true);
+    setFetchColsError("");
+    try {
+      const res = await fetch("/api/db/columns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dbType,
+          connectionString: str("connectionString"),
+          host: str("host", "localhost"),
+          port: num("port", dbMeta.defaultPort),
+          dbName: str("dbName"),
+          user: str("user"),
+          password: str("password"),
+          table: str("table"),
+          supabaseUrl: str("supabaseUrl"),
+          supabaseKey: str("supabaseKey"),
+        }),
+      });
+      const data = await res.json();
+      if (data.columns) {
+        setFetchedColumns(data.columns as string[]);
+      } else {
+        setFetchColsError(data.error ?? "Erro desconhecido");
+      }
+    } catch (e: unknown) {
+      setFetchColsError((e as Error).message);
+    } finally {
+      setFetchingCols(false);
+    }
+  };
+
+  const updateField = (fieldKey: string, index: number, k: keyof DbField, v: string | boolean) => {
+    const fields = arr(fieldKey);
+    const updated = [...fields];
+    updated[index] = { ...updated[index], [k]: v };
+    onUpdateConfig(fieldKey, updated);
+  };
+  const removeField = (fieldKey: string, index: number) => {
+    onUpdateConfig(fieldKey, arr(fieldKey).filter((_, i) => i !== index));
+  };
+  const addField = (fieldKey: string) => {
+    onUpdateConfig(fieldKey, [...arr(fieldKey), { column: "", value: "", enabled: true }]);
+  };
+
+  const colInput = (field: DbField, fieldKey: string, index: number) => (
+    <>
+      <input
+        list="db-cols-list"
+        value={field.column}
+        onChange={(e) => updateField(fieldKey, index, "column", e.target.value)}
+        placeholder="coluna"
+        style={{ flex: "0 0 38%", fontFamily: "monospace", fontSize: 11, height: 28, padding: "0 6px", background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", borderRadius: 5, color: "hsl(var(--foreground))", minWidth: 0 }}
+      />
+      <input
+        value={field.value}
+        onChange={(e) => updateField(fieldKey, index, "value", e.target.value)}
+        placeholder='valor / pipeline["x"]'
+        style={{ flex: 1, fontFamily: "monospace", fontSize: 11, height: 28, padding: "0 6px", background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", borderRadius: 5, color: "hsl(var(--foreground))", minWidth: 0 }}
+      />
+    </>
+  );
+
+  const renderFieldRow = (field: DbField, index: number, fieldKey: string) => (
+    <div key={index} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
+      <input type="checkbox" checked={field.enabled !== false} onChange={(e) => updateField(fieldKey, index, "enabled", e.target.checked)} style={{ width: 13, height: 13, flexShrink: 0, cursor: "pointer" }} />
+      {colInput(field, fieldKey, index)}
+      <button onClick={() => removeField(fieldKey, index)} style={{ flexShrink: 0, background: "none", border: "none", cursor: "pointer", color: "#ef4444", fontSize: 16, lineHeight: 1, padding: "0 4px", borderRadius: 4 }}>×</button>
+    </div>
+  );
+
+  const addBtn = (fieldKey: string, color: string) => (
+    <button onClick={() => addField(fieldKey)} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 11, color, background: `${color}10`, border: `1px dashed ${color}66`, borderRadius: 6, padding: "5px 10px", cursor: "pointer", width: "100%", marginTop: 4 }}>
+      + Adicionar campo
+    </button>
+  );
+
+  const sectionTitle = (label: string) => (
+    <div style={{ fontSize: 10, fontWeight: 700, color: "hsl(var(--muted-foreground))", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, marginTop: 12 }}>{label}</div>
+  );
+
+  const whereRow = (colKey: string, valKey: string) => (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+      <input list="db-cols-list" value={str(colKey)} onChange={(e) => onUpdateConfig(colKey, e.target.value)} placeholder="coluna WHERE" style={{ fontFamily: "monospace", fontSize: 11, height: 32, padding: "0 8px", background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", borderRadius: 6, color: "hsl(var(--foreground))" }} />
+      <Input value={str(valKey)} onChange={(e) => onUpdateConfig(valKey, e.target.value)} placeholder='valor / pipeline["id"]' style={{ fontFamily: "monospace", fontSize: 11 }} />
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Column autocomplete datalist */}
+      <datalist id="db-cols-list">
+        {fetchedColumns.map((col) => <option key={col} value={col} />)}
+      </datalist>
+
+      {/* DB + operation badges */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        <span style={{ padding: "2px 10px", borderRadius: 20, background: `${dbMeta.color}22`, border: `1px solid ${dbMeta.color}55`, color: dbMeta.color, fontSize: 11, fontWeight: 600 }}>{dbMeta.label}</span>
+        <span style={{ padding: "2px 10px", borderRadius: 20, background: `${opMeta.color}22`, border: `1px solid ${opMeta.color}55`, color: opMeta.color, fontSize: 11, fontWeight: 600 }}>{opMeta.label}</span>
+      </div>
+
+      {/* ── CONEXÃO ─────────────────────────────── */}
+      {sectionTitle("Conexão")}
+      {isSupabase ? (
+        <>
+          <Field label="Supabase URL">
+            <Input value={str("supabaseUrl")} onChange={(e) => onUpdateConfig("supabaseUrl", e.target.value)} placeholder="https://xxxx.supabase.co" />
+          </Field>
+          <Field label="API Key">
+            <Input type="password" value={str("supabaseKey")} onChange={(e) => onUpdateConfig("supabaseKey", e.target.value)} placeholder="anon/service-role key" />
+          </Field>
+        </>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <Switch checked={bool("useConnectionString")} onCheckedChange={(v) => onUpdateConfig("useConnectionString", v)} />
+            <span style={{ fontSize: 12 }}>Usar connection string</span>
+          </div>
+          {bool("useConnectionString") ? (
+            <Field label="Connection String">
+              <Input value={str("connectionString")} onChange={(e) => onUpdateConfig("connectionString", e.target.value)} placeholder={`postgresql://user:pass@host:${dbMeta.defaultPort}/db`} style={{ fontFamily: "monospace", fontSize: 12 }} />
+            </Field>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 72px", gap: 6, marginBottom: 6 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 3 }}>Host</label>
+                  <Input value={str("host", "localhost")} onChange={(e) => onUpdateConfig("host", e.target.value)} placeholder="localhost" />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 3 }}>Porta</label>
+                  <Input type="number" value={num("port", dbMeta.defaultPort)} onChange={(e) => onUpdateConfig("port", Number(e.target.value))} />
+                </div>
+              </div>
+              <Field label="Database">
+                <Input value={str("dbName")} onChange={(e) => onUpdateConfig("dbName", e.target.value)} placeholder="meu_banco" />
+              </Field>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 3 }}>Usuário</label>
+                  <Input value={str("user")} onChange={(e) => onUpdateConfig("user", e.target.value)} placeholder="postgres" />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 3 }}>Senha</label>
+                  <Input type="password" value={str("password")} onChange={(e) => onUpdateConfig("password", e.target.value)} placeholder="••••••" />
+                </div>
+              </div>
+              {(dbType === "mssql" || dbType === "oracle") && (
+                <div style={{ padding: "7px 10px", background: "rgba(251,146,60,0.1)", border: "1px solid rgba(251,146,60,0.3)", borderRadius: 6, fontSize: 11, color: "#fb923c", marginBottom: 6 }}>
+                  Requer <strong>{dbMeta.installPkg}</strong> instalado.
+                  Adicione um nodo <strong>Pip Packages</strong> antes e instale <code>{dbMeta.installPkg}</code>.
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      {/* ── TABELA + Buscar colunas ─────────────── */}
+      {sectionTitle("Tabela")}
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+        <Input
+          value={str("table")}
+          onChange={(e) => onUpdateConfig("table", e.target.value)}
+          placeholder="nome_da_tabela"
+          style={{ flex: 1 }}
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleFetchColumns}
+          disabled={fetchingCols || !str("table")}
+          style={{ whiteSpace: "nowrap", fontSize: 11, gap: 4, flexShrink: 0, height: 36 }}
+        >
+          {fetchingCols
+            ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
+            : <Database size={12} />}
+          Buscar colunas
+        </Button>
+      </div>
+      {fetchColsError && (
+        <div style={{ padding: "6px 10px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 6, fontSize: 11, color: "#ef4444", marginBottom: 6 }}>
+          {fetchColsError}
+        </div>
+      )}
+      {fetchedColumns.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 8 }}>
+          {fetchedColumns.map((col) => (
+            <span key={col} style={{ padding: "1px 7px", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 10, fontSize: 10, color: "#10b981", fontFamily: "monospace" }}>{col}</span>
+          ))}
+        </div>
+      )}
+
+      {/* ── OPERAÇÃO ────────────────────────────── */}
+      <div style={{ borderTop: `2px solid ${opMeta.color}55`, marginBottom: 8, marginTop: 8 }} />
+      <div style={{ fontSize: 11, fontWeight: 700, color: opMeta.color, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>{opMeta.label}</div>
+
+      {operation === "select" && (
+        <>
+          <Field label="Colunas (SELECT)">
+            <Input value={str("selectColumns", "*")} onChange={(e) => onUpdateConfig("selectColumns", e.target.value)} placeholder="* ou col1, col2" />
+          </Field>
+          <Field label="WHERE (cláusula SQL)">
+            <Input value={str("whereClause")} onChange={(e) => onUpdateConfig("whereClause", e.target.value)} placeholder="id = 1 ou status = 'ativo'" style={{ fontFamily: "monospace", fontSize: 12 }} />
+          </Field>
+          <Field label="ORDER BY">
+            <Input value={str("orderBy")} onChange={(e) => onUpdateConfig("orderBy", e.target.value)} placeholder="created_at DESC" style={{ fontFamily: "monospace", fontSize: 12 }} />
+          </Field>
+          <Field label="LIMIT">
+            <Input type="number" min={1} value={num("limit", 100)} onChange={(e) => onUpdateConfig("limit", Number(e.target.value))} />
+          </Field>
+        </>
+      )}
+
+      {operation === "insert" && (
+        <>
+          <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", marginBottom: 8 }}>
+            Valor pode ser literal (<code>"texto"</code>, <code>42</code>) ou expressão Python (<code>pipeline["campo"]</code>).
+          </div>
+          {arr("fields").map((f, i) => renderFieldRow(f, i, "fields"))}
+          {addBtn("fields", "#34d399")}
+        </>
+      )}
+
+      {operation === "update" && (
+        <>
+          <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", marginBottom: 4 }}>WHERE — coluna e valor de filtro:</div>
+          {whereRow("whereColumn", "whereValue")}
+          {sectionTitle("Campos para atualizar")}
+          {arr("fields").map((f, i) => renderFieldRow(f, i, "fields"))}
+          {addBtn("fields", "#f59e0b")}
+        </>
+      )}
+
+      {operation === "delete" && (
+        <>
+          <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", marginBottom: 4 }}>WHERE — coluna e valor de filtro:</div>
+          {whereRow("whereColumn", "whereValue")}
+        </>
+      )}
+
+      {operation === "upsert" && (
+        <>
+          <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", marginBottom: 4 }}>Verificar existência por coluna:</div>
+          {whereRow("checkColumn", "checkValue")}
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#34d399", marginBottom: 4, marginTop: 10 }}>✦ Se NÃO existir — Inserir:</div>
+          {arr("insertFields").map((f, i) => renderFieldRow(f, i, "insertFields"))}
+          {addBtn("insertFields", "#34d399")}
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#f59e0b", marginBottom: 4, marginTop: 14 }}>✦ Se JÁ existir — Atualizar:</div>
+          {arr("updateFields").map((f, i) => renderFieldRow(f, i, "updateFields"))}
+          {addBtn("updateFields", "#f59e0b")}
+        </>
+      )}
+
+      {/* ── SAÍDA ──────────────────────────────── */}
+      {sectionTitle("Saída")}
+      <Field label="Variável de saída">
+        <Input value={str("outputVar", "result")} onChange={(e) => onUpdateConfig("outputVar", e.target.value)} placeholder="result" />
+      </Field>
+      {!isSupabase && (
+        <div style={{ padding: "6px 10px", background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.2)", borderRadius: 6, fontSize: 11, color: "#60a5fa" }}>
+          Necessário: <strong>{dbMeta.installPkg}</strong>. Use o nodo <strong>Pip Packages</strong> (ação Install) antes deste nodo se não instalado.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function HttpRequestConfig({
   cfg,
