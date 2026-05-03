@@ -176,4 +176,100 @@ router.post("/ai/generate-code", async (req, res) => {
   }
 });
 
+// POST /api/ai/copilot-suggest
+const COPILOT_SYSTEM = `You are an AI pair programmer for Python code in flowpython automation platform.
+Available context: pipeline (dict), workflow (dict).
+Rules:
+- Return ONLY the completion text that should be inserted at the cursor, nothing else.
+- Do NOT repeat code that already exists before the cursor.
+- Complete the current line or add the next 1-3 lines maximum.
+- Be concise. No markdown, no fences, no explanation.
+- If nothing useful to suggest, return empty string.
+- Prefer idiomatic Python. Use pipeline["key"] to read/write data.`;
+
+router.post("/ai/copilot-suggest", async (req, res) => {
+  const { code, cursorPos, cursorLine, provider, model } = req.body as {
+    code: string; cursorPos: number; cursorLine: string; provider: string; model: string;
+  };
+
+  if (!provider || !model || !code) {
+    return res.status(400).json({ error: "provider, model e code são obrigatórios" });
+  }
+
+  try {
+    const [row] = await db.select().from(aiProvidersTable).where(eq(aiProvidersTable.id, provider)).limit(1);
+    if (!row || !row.enabled || !row.apiKey) {
+      return res.status(400).json({ error: "Provedor não configurado" });
+    }
+
+    const before = code.slice(0, cursorPos);
+    const after = code.slice(cursorPos);
+    const userPrompt = `Complete this Python code. Cursor is marked with <CURSOR>.\n\`\`\`python\n${before}<CURSOR>${after}\n\`\`\`\nReturn only the text to insert at <CURSOR>:`;
+
+    const apiKey = row.apiKey;
+    let suggestion = "";
+
+    if (provider === "openai") {
+      const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: COPILOT_SYSTEM },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.1,
+          max_tokens: 120,
+        }),
+      });
+      if (!resp.ok) return res.json({ suggestion: "" });
+      const data = await resp.json() as any;
+      suggestion = data.choices?.[0]?.message?.content ?? "";
+
+    } else if (provider === "gemini") {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: COPILOT_SYSTEM }] },
+          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 120 },
+        }),
+      });
+      if (!resp.ok) return res.json({ suggestion: "" });
+      const data = await resp.json() as any;
+      suggestion = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+
+    } else if (provider === "anthropic") {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 120,
+          system: COPILOT_SYSTEM,
+          messages: [{ role: "user", content: userPrompt }],
+        }),
+      });
+      if (!resp.ok) return res.json({ suggestion: "" });
+      const data = await resp.json() as any;
+      suggestion = data.content?.[0]?.text ?? "";
+    }
+
+    suggestion = suggestion.replace(/^```python\n?/i, "").replace(/^```\n?/i, "").replace(/\n?```$/i, "").trim();
+    if (suggestion === cursorLine.trim()) suggestion = "";
+
+    res.json({ suggestion });
+  } catch (err: any) {
+    req.log.error(err);
+    res.json({ suggestion: "" });
+  }
+});
+
 export default router;

@@ -1,13 +1,14 @@
-import { memo } from "react";
+import { memo, useState, useContext } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
 import {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
   Variable, Database, Shuffle, Globe, Timer, StickyNote, Pin, Braces, Syringe, Package,
   ToggleRight, GitMerge, ListFilter, Layers, Sigma, Scissors,
-  ArrowUpDown, FilterX, Hash, MoveRight,
+  ArrowUpDown, FilterX, Hash, MoveRight, Link2,
   LucideProps,
 } from "lucide-react";
 import { getNodeDef, NODE_CATEGORY_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
+import { QuickConnectCtx, QuickConnectPopup } from "@/components/quick-connect-popup";
 
 const ICON_MAP: Record<string, React.FC<LucideProps>> = {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
@@ -16,7 +17,7 @@ const ICON_MAP: Record<string, React.FC<LucideProps>> = {
   ArrowUpDown, FilterX, Hash,
 };
 
-export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) => {
+export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps) => {
   const def = getNodeDef(data.type as string);
   const color = def?.color ?? "#94a3b8";
   const executionStatus = data.executionStatus as string | undefined;
@@ -28,6 +29,11 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
   const hasOutput = def?.hasOutput ?? true;
   const isNote = data.type === "note";
   const isPinned = !!(data.config as Record<string, unknown>)?.pinned;
+  const nodeId = id;
+
+  const { onQuickConnect } = useContext(QuickConnectCtx);
+  const [popupAnchor, setPopupAnchor] = useState<DOMRect | null>(null);
+  const [hovered, setHovered] = useState(false);
 
   // For variable nodes: show scope badge
   const cfg = (data.config as Record<string, unknown>) ?? {};
@@ -48,8 +54,16 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
     ? ((cfg.packages as unknown[]) ?? []).length
     : pipMode === "single" ? (cfg.packageName ? 1 : 0) : null;
 
+  const handleQuickConnectClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+    setPopupAnchor(rect);
+  };
+
   return (
     <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         border: `2px solid ${selected ? color : isPinned ? `${color}88` : "rgba(255,255,255,0.12)"}`,
         borderRadius: 10,
@@ -240,11 +254,51 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
       )}
 
       {hasOutput && (
-        <Handle
-          type="source"
-          position={Position.Right}
-          isConnectable={isConnectable}
-          style={{ background: color, border: "2px solid hsl(var(--background))", width: 12, height: 12, right: -7 }}
+        <>
+          <Handle
+            type="source"
+            position={Position.Right}
+            isConnectable={isConnectable}
+            style={{ background: color, border: "2px solid hsl(var(--background))", width: 12, height: 12, right: -7 }}
+          />
+
+          {/* Quick-connect button — appears on hover, overlaid above/near the source handle */}
+          <button
+            className="nodrag nopan"
+            title="Adicionar nova conexão"
+            onClick={handleQuickConnectClick}
+            style={{
+              position: "absolute",
+              right: -34,
+              top: "50%",
+              transform: "translateY(-50%)",
+              width: 22,
+              height: 22,
+              borderRadius: "50%",
+              background: hovered || popupAnchor ? `${color}cc` : "transparent",
+              border: `1.5px solid ${hovered || popupAnchor ? color : "transparent"}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              transition: "all 0.15s",
+              opacity: hovered || popupAnchor ? 1 : 0,
+              zIndex: 20,
+              padding: 0,
+              pointerEvents: hovered || popupAnchor ? "all" : "none",
+            }}
+          >
+            <Link2 size={10} color="white" strokeWidth={2.5} />
+          </button>
+        </>
+      )}
+
+      {/* Quick-connect popup */}
+      {popupAnchor && (
+        <QuickConnectPopup
+          sourceNodeId={nodeId}
+          anchorRect={popupAnchor}
+          onClose={() => setPopupAnchor(null)}
         />
       )}
     </div>

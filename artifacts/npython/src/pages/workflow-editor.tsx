@@ -46,11 +46,15 @@ import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { python } from "@codemirror/lang-python";
+import { autocompletion } from "@codemirror/autocomplete";
 
 import { CanvasNode } from "@/components/canvas-node";
 import { EdgeWithDelete } from "@/components/edge-with-delete";
 import { NodePalette } from "@/components/node-palette";
 import { NodeDef, getNodeDef, isTriggerType, isDatabaseNodeType, parseDbNodeType, DB_META, DB_OP_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
+import { pythonLibraryCompletionSource } from "@/lib/python-completions";
+import { copilotExtension } from "@/lib/copilot-extension";
+import { QuickConnectCtx } from "@/components/quick-connect-popup";
 import {
   useListVariables,
 } from "@workspace/api-client-react";
@@ -339,6 +343,27 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
 
   const hasTrigger = nodes.some((n) => isTriggerType(n.data.type as string));
 
+  // ── Quick-connect: create edge from source → target ───────────────
+  const handleQuickConnect = useCallback((sourceId: string, targetId: string) => {
+    setEdges((eds) => {
+      if (eds.some((e) => e.source === sourceId && e.target === targetId)) return eds;
+      return addEdge({
+        id: `edge_${Date.now()}`,
+        source: sourceId,
+        target: targetId,
+        type: "custom",
+        animated: true,
+        style: { stroke: "hsl(var(--primary))", strokeWidth: 2 },
+      }, eds);
+    });
+  }, []);
+
+  const quickConnectCtxValue = useMemo(() => ({
+    nodes,
+    edges: edges.map((e) => ({ source: e.source, target: e.target })),
+    onQuickConnect: handleQuickConnect,
+  }), [nodes, edges, handleQuickConnect]);
+
   // Map each pipeline variable name to its source node's color + label
   const varColorMap = useMemo<Record<string, VarColorInfo>>(() => {
     const map: Record<string, VarColorInfo> = {};
@@ -385,6 +410,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   };
 
   return (
+    <QuickConnectCtx.Provider value={quickConnectCtxValue}>
     <VarColorCtx.Provider value={varColorMap}>
 
     {/* ── Dependency installation dialog ── */}
@@ -632,6 +658,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       )}
     </div>
     </VarColorCtx.Provider>
+    </QuickConnectCtx.Provider>
   );
 }
 
@@ -1425,6 +1452,49 @@ function NodeConfigPanel({
   const isNote = type === "note";
   const isTrigger = isTriggerType(type);
 
+  // ── Copilot state ─────────────────────────────────────────────────
+  const [copilotEnabled, setCopilotEnabled] = useState(false);
+  const [copilotProvider, setCopilotProvider] = useState("");
+  const [copilotModel, setCopilotModel] = useState("");
+
+  useEffect(() => {
+    if (type !== "code") return;
+    fetch("/api/settings/ai-providers")
+      .then((r) => r.ok ? r.json() : [])
+      .then((providers: AiProviderInfo[]) => {
+        const active = providers.filter((p) => p.enabled && p.hasKey);
+        if (active.length > 0 && !copilotProvider) {
+          setCopilotProvider(active[0].id);
+          setCopilotModel(active[0].model || active[0].models[0] || "");
+        }
+      })
+      .catch(() => {});
+  }, [type]);
+
+  const copilotExt = useMemo((): import("@codemirror/state").Extension[] => {
+    if (type !== "code") return [];
+    return [copilotExtension({
+      enabled: () => copilotEnabled,
+      onSuggest: async (code, cursorPos, cursorLine) => {
+        if (!copilotProvider || !copilotModel) return null;
+        try {
+          const res = await fetch("/api/ai/copilot-suggest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code, cursorPos, cursorLine, provider: copilotProvider, model: copilotModel }),
+          });
+          if (!res.ok) return null;
+          const data = await res.json() as { suggestion?: string };
+          return data.suggestion || null;
+        } catch { return null; }
+      },
+    })];
+  }, [type, copilotEnabled, copilotProvider, copilotModel]);
+
+  const intellisenseExt = useMemo(() =>
+    autocompletion({ override: [pythonLibraryCompletionSource] }),
+  []);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
 
@@ -1459,19 +1529,47 @@ function NodeConfigPanel({
 
       {type === "code" && (
         <>
+          {/* ── Copilot toggle bar ─────────────────────────────────── */}
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "6px 10px", borderRadius: 7,
+            background: copilotEnabled ? "rgba(167,139,250,0.08)" : "rgba(255,255,255,0.03)",
+            border: `1px solid ${copilotEnabled ? "rgba(167,139,250,0.3)" : "hsl(var(--border))"}`,
+            transition: "all 0.15s",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <Bot size={13} color={copilotEnabled ? "#a78bfa" : "hsl(var(--muted-foreground))"} />
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: copilotEnabled ? "#a78bfa" : "hsl(var(--foreground))" }}>
+                  Copilot IA
+                </div>
+                <div style={{ fontSize: 9, color: "hsl(var(--muted-foreground))" }}>
+                  {copilotEnabled ? "Tab para aceitar sugestão" : "Sugestões inline de código"}
+                </div>
+              </div>
+            </div>
+            <Switch checked={copilotEnabled} onCheckedChange={setCopilotEnabled} />
+          </div>
+
           <Field label="Código Python">
-            <div style={{ border: "1px solid hsl(var(--border))", borderRadius: 6, overflow: "hidden" }}>
+            <div style={{
+              border: `1px solid ${copilotEnabled ? "rgba(167,139,250,0.4)" : "hsl(var(--border))"}`,
+              borderRadius: 6, overflow: "hidden",
+              transition: "border-color 0.15s",
+              boxShadow: copilotEnabled ? "0 0 0 2px rgba(167,139,250,0.1)" : "none",
+            }}>
               <CodeMirror
                 value={(cfg.code as string) ?? ""}
                 height="220px"
                 theme="dark"
-                extensions={[python(), varDropExtension]}
+                extensions={[python(), varDropExtension, intellisenseExt, ...copilotExt]}
                 onChange={(val) => onUpdateConfig("code", val)}
               />
             </div>
             <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 4, lineHeight: 1.5 }}>
               Use <code style={{ color: "#a78bfa", background: "rgba(167,139,250,0.1)", padding: "1px 4px", borderRadius: 3 }}>pipeline</code> para ler/escrever dados entre nodos.
               Retorne um dict com <code style={{ color: "#14b8a6", background: "rgba(20,184,166,0.1)", padding: "1px 4px", borderRadius: 3 }}>return {"{"}chave: valor{"}"}</code> para definir a saída do nodo.
+              {copilotEnabled && <span style={{ color: "#a78bfa", marginLeft: 6 }}>• Copilot ativo — pressione <strong>Tab</strong> para aceitar</span>}
             </div>
           </Field>
           <AiCodeAssistant onCodeGenerated={(code) => onUpdateConfig("code", code)} />
@@ -1502,7 +1600,7 @@ function NodeConfigPanel({
       {type === "transform" && (
         <Field label="Código Python (variável `input`)">
           <div style={{ border: "1px solid hsl(var(--border))", borderRadius: 6, overflow: "hidden" }}>
-            <CodeMirror value={(cfg.code as string) ?? "output = input"} height="160px" theme="dark" extensions={[python(), varDropExtension]} onChange={(val) => onUpdateConfig("code", val)} />
+            <CodeMirror value={(cfg.code as string) ?? "output = input"} height="160px" theme="dark" extensions={[python(), varDropExtension, intellisenseExt]} onChange={(val) => onUpdateConfig("code", val)} />
           </div>
         </Field>
       )}
