@@ -62,7 +62,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
-        <div className={`flex-1 relative ${/\/workflows\/[^/]+\/edit/.test(location) ? "overflow-hidden" : "overflow-y-auto p-8"}`}>
+        <div className={`flex-1 relative ${/\/workflows\/[^/]+\/edit/.test(location) || /\/executions\/[^/]+/.test(location) ? "overflow-hidden" : "overflow-y-auto p-8"}`}>
           {children}
         </div>
       </main>

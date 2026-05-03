@@ -19,6 +19,8 @@ const ICON_MAP: Record<string, React.FC<LucideProps>> = {
 export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) => {
   const def = getNodeDef(data.type as string);
   const color = def?.color ?? "#94a3b8";
+  const executionStatus = data.executionStatus as string | undefined;
+  const executionDurationMs = data.executionDurationMs as number | undefined;
   const catMeta = def ? NODE_CATEGORY_META[def.category] : null;
   const bg = catMeta?.bg ?? "rgba(148,163,184,0.12)";
   const IconComponent = def ? (ICON_MAP[def.iconName] ?? Code2) : Code2;
@@ -61,6 +63,34 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
         position: "relative",
       }}
     >
+      {/* Execution status ring */}
+      {!!(executionStatus && executionStatus !== "pending") && (
+        <div style={{
+          position: "absolute", inset: -3, borderRadius: 13, pointerEvents: "none", zIndex: 1,
+          border: `2.5px solid ${
+            executionStatus === "success" ? "#22c55e" :
+            executionStatus === "failed" ? "#ef4444" :
+            executionStatus === "running" ? "#3b82f6" : "#6b7280"
+          }`,
+          boxShadow:
+            executionStatus === "failed" ? "0 0 14px rgba(239,68,68,0.4)" :
+            executionStatus === "success" ? "0 0 10px rgba(34,197,94,0.3)" :
+            executionStatus === "running" ? "0 0 14px rgba(59,130,246,0.45)" : "none",
+        }} />
+      )}
+      {/* Execution duration badge */}
+      {executionDurationMs !== undefined && executionDurationMs !== null && (
+        <div style={{
+          position: "absolute", bottom: -12, left: "50%", transform: "translateX(-50%)", zIndex: 10,
+          fontSize: 9, fontWeight: 700, letterSpacing: "0.04em",
+          color: executionStatus === "failed" ? "#ef4444" : executionStatus === "success" ? "#22c55e" : "hsl(var(--muted-foreground))",
+          background: "hsl(var(--background))", border: `1px solid ${executionStatus === "failed" ? "rgba(239,68,68,0.4)" : executionStatus === "success" ? "rgba(34,197,94,0.4)" : "hsl(var(--border))"}`,
+          borderRadius: 4, padding: "0px 5px", lineHeight: "16px", whiteSpace: "nowrap",
+        }}>
+          {executionDurationMs < 1000 ? `${executionDurationMs}ms` : `${(executionDurationMs / 1000).toFixed(2)}s`}
+        </div>
+      )}
+
       {/* Pin badge */}
       {isPinned && (
         <div
@@ -111,7 +141,7 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
             {data.label as string}
           </div>
           <div style={{ fontSize: 10, color: color, fontWeight: 500, marginTop: 1 }}>
-            {isPinned ? "📌 PINNED" : (def?.category.toUpperCase() ?? "NODE")}
+            {isPinned ? "📌 PINNED" : (def ? def.category.toUpperCase() : "NODE")}
           </div>
         </div>
       </div>
@@ -148,7 +178,7 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
               {scopeMeta.label}
             </span>
           )}
-          {cfg.key && (
+          {!!(cfg.key) && (
             <span style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 80 }}>
               {cfg.key as string}
             </span>
@@ -172,7 +202,7 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
               {dataOutputVar}
             </span>
           )}
-          {data.type === "switch" && cfg.conditions && (
+          {data.type === "switch" && !!(cfg.conditions) && (
             <span style={{ fontSize: 9, color: "hsl(var(--muted-foreground))", marginLeft: 2 }}>
               {((cfg.conditions as unknown[]) ?? []).length} branches
             </span>
@@ -203,7 +233,7 @@ export const CanvasNode = memo(({ data, isConnectable, selected }: NodeProps) =>
       )}
 
       {/* Note text */}
-      {isNote && cfg.text && (
+      {isNote && !!(cfg.text) && (
         <div style={{ padding: "8px 10px", fontSize: 11, color: "hsl(var(--muted-foreground))", fontStyle: "italic", whiteSpace: "pre-wrap", maxHeight: 80, overflow: "hidden" }}>
           {cfg.text as string}
         </div>

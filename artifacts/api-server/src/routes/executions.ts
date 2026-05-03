@@ -138,6 +138,92 @@ router.get("/executions/:id", async (req, res) => {
   }
 });
 
+// GET /executions/:id/debug — full debug payload (nodes + edges + logs + I/O snapshots)
+router.get("/executions/:id/debug", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [row] = await db
+      .select({ exec: executionsTable, workflowName: workflowsTable.name })
+      .from(executionsTable)
+      .innerJoin(workflowsTable, eq(executionsTable.workflowId, workflowsTable.id))
+      .where(eq(executionsTable.id, id));
+
+    if (!row) return res.status(404).json({ error: "Execution not found" });
+
+    const nodes = await db.select().from(nodesTable).where(eq(nodesTable.workflowId, row.exec.workflowId));
+    const edges = await db.select().from(edgesTable).where(eq(edgesTable.workflowId, row.exec.workflowId));
+    const logs = await db
+      .select()
+      .from(logLinesTable)
+      .where(eq(logLinesTable.executionId, id))
+      .orderBy(logLinesTable.timestamp);
+
+    res.json({
+      id: row.exec.id,
+      workflowId: row.exec.workflowId,
+      workflowName: row.workflowName,
+      status: row.exec.status,
+      startedAt: row.exec.startedAt.toISOString(),
+      finishedAt: row.exec.finishedAt?.toISOString() ?? null,
+      durationMs: row.exec.durationMs ?? null,
+      errorMessage: row.exec.errorMessage ?? null,
+      nodeResults: (row.exec.nodeResults as any[]) ?? [],
+      nodes: nodes.map((n) => ({
+        id: n.id,
+        type: n.type,
+        label: n.label,
+        positionX: n.positionX,
+        positionY: n.positionY,
+        config: n.config,
+      })),
+      edges: edges.map((e) => ({
+        id: e.id,
+        sourceNodeId: e.sourceNodeId,
+        targetNodeId: e.targetNodeId,
+        label: e.label,
+        condition: e.condition,
+      })),
+      logs: logs.map((l) => ({
+        id: l.id,
+        nodeId: l.nodeId ?? null,
+        level: l.level,
+        message: l.message,
+        timestamp: l.timestamp.toISOString(),
+      })),
+    });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /executions/:id/apply-fixes — save corrected node configs back to workflow
+router.post("/executions/:id/apply-fixes", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nodes: nodeUpdates } = req.body as {
+      nodes: Array<{ id: string; config: Record<string, unknown>; label?: string }>;
+    };
+
+    const [exec] = await db.select().from(executionsTable).where(eq(executionsTable.id, id));
+    if (!exec) return res.status(404).json({ error: "Execution not found" });
+
+    for (const update of nodeUpdates ?? []) {
+      const updateSet: Record<string, unknown> = { config: update.config };
+      if (update.label) updateSet.label = update.label;
+      await db
+        .update(nodesTable)
+        .set(updateSet as any)
+        .where(and(eq(nodesTable.id, update.id), eq(nodesTable.workflowId, exec.workflowId)));
+    }
+
+    res.json({ success: true, applied: (nodeUpdates ?? []).length });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // POST /executions/:id/stop
 router.post("/executions/:id/stop", async (req, res) => {
   try {
@@ -408,6 +494,10 @@ async function runWorkflow({
       let success = false;
       let output = "";
       let error: string | null = null;
+      const inputSnapshot = JSON.parse(JSON.stringify({
+        pipeline: pipelineContext,
+        workflow: workflowContext,
+      }));
 
       try {
         // ── Pinned: return mock output without executing ────────────
@@ -852,6 +942,12 @@ async function runWorkflow({
       nodeResults[node.id].durationMs = nodeEnd - nodeStart;
       nodeResults[node.id].output = output || null;
       nodeResults[node.id].error = error;
+      nodeResults[node.id].inputSnapshot = inputSnapshot;
+      nodeResults[node.id].outputSnapshot = JSON.parse(JSON.stringify({
+        pipeline: pipelineContext,
+        workflow: workflowContext,
+      }));
+      nodeResults[node.id].nodeConfig = node.config;
 
       await db
         .update(executionsTable)

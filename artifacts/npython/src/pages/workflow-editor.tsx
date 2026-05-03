@@ -84,7 +84,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
           id: n.id,
           type: "custom",
           position: { x: n.positionX, y: n.positionY },
-          data: { label: n.label, type: n.type, config: n.config, ...n },
+          data: { ...n },
         }))
       );
       setEdges(

@@ -31,7 +31,13 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - Individual node execution (test in isolation)
 - Per-workflow Python venv with pip package management
 - Full workflow execution engine (topological sort, sequential node execution)
-- Execution history with status, duration, triggered-by
+- Execution history with status, duration, triggered-by (n8n-style list with colored status indicators)
+- **Execution Debugger**: full-screen debug view per execution with:
+  - ReactFlow canvas with per-node status rings (green/red/blue/gray) and duration badges
+  - Inspector panel (Output/Input/Parameters/Logs tabs) when clicking any node
+  - Per-node I/O snapshots (pipeline + workflow context captured before/after each node)
+  - Edit mode to hot-fix node configs (Python code) with "Apply to Workflow" to save back
+  - Real-time polling for live executions, Global Logs drawer, stop-execution button
 - Real-time log lines per execution and per node
 - Stop running executions
 - Global variables (string, number, boolean, json types)
@@ -64,6 +70,8 @@ Set `NPYTHON_VENVS_DIR` env var to change the base directory.
 - `GET /api/executions` — list executions (filterable)
 - `GET /api/executions/summary` — dashboard summary stats
 - `GET /api/executions/:id` — execution detail with node results
+- `GET /api/executions/:id/debug` — full debug data: nodes, edges, nodeResults (with inputSnapshot/outputSnapshot/nodeConfig), logs
+- `POST /api/executions/:id/apply-fixes` — save hot-fixed node configs back to the workflow
 - `POST /api/executions/:id/stop` — stop a running execution
 - `GET /api/executions/:id/logs` — execution log lines
 - `GET/POST /api/variables` — global variables
