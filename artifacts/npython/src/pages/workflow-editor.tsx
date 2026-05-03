@@ -31,10 +31,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
+  AlertDialog, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   ArrowLeft, Play, Save, Settings, X, Trash2, AlertTriangle,
   FlaskConical, Pin, PinOff, CheckCircle2, XCircle, Loader2, Plus, Package,
   Eye, EyeOff, Lock, ShieldOff, Shield, Database,
-  ChevronDown, ChevronRight, Network, Copy, Zap,
+  ChevronDown, ChevronRight, Network, Copy, Zap, Download, PackageCheck,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -52,6 +56,17 @@ import {
 
 const nodeTypes = { custom: CanvasNode };
 const edgeTypes = { custom: EdgeWithDelete };
+
+// ─── Dep map: node type → required pip package ────────────────────────────────
+function getNodePkg(nodeType: string): string | null {
+  if (/^pg_/.test(nodeType))       return "psycopg2-binary";
+  if (/^mysql_/.test(nodeType))    return "pymysql";
+  if (/^mssql_/.test(nodeType))    return "pyodbc";
+  if (/^oracle_/.test(nodeType))   return "oracledb";
+  if (/^supabase_/.test(nodeType)) return "requests";
+  if (nodeType === "http_request") return "requests";
+  return null;
+}
 
 // ─── Inner editor ─────────────────────────────────────────────────────────────
 
@@ -80,6 +95,12 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const [lastRunOutputs, setLastRunOutputs] = useState<Record<string, NodeOutput>>({});
   const [configPanelTab, setConfigPanelTab] = useState<"config" | "output">("config");
 
+  // ── Installed packages + dep-install dialog ─────────────────────────
+  const [installedPkgs, setInstalledPkgs] = useState<string[]>([]);
+  type DepDialog = { def: NodeDef; pkg: string; position?: { x: number; y: number } };
+  const [depDialog, setDepDialog] = useState<DepDialog | null>(null);
+  const [depInstalling, setDepInstalling] = useState(false);
+
   // Clear test result + reset tab when selected node changes
   useEffect(() => { setTestResult(null); setConfigPanelTab("config"); }, [selectedNode?.id]);
 
@@ -92,7 +113,17 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     } catch {}
   }, [workflowId]);
 
+  const fetchInstalledPkgs = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/workflows/${workflowId}/packages`);
+      if (!res.ok) return;
+      const data: { name: string }[] = await res.json();
+      setInstalledPkgs(data.map((p) => p.name.toLowerCase()));
+    } catch {}
+  }, [workflowId]);
+
   useEffect(() => { fetchLastRunOutputs(); }, [fetchLastRunOutputs]);
+  useEffect(() => { fetchInstalledPkgs(); }, [fetchInstalledPkgs]);
 
   // Load workflow nodes/edges once
   useEffect(() => {
@@ -159,19 +190,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     e.dataTransfer.dropEffect = "copy";
   }, []);
 
-  const onDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      const raw = e.dataTransfer.getData("application/flowpython-node");
-      if (!raw) return;
-      const def: NodeDef = JSON.parse(raw);
-      const position = reactFlow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
-      addNodeFromDef(def, position);
-    },
-    [reactFlow]
-  );
-
-  const addNodeFromDef = useCallback((def: NodeDef, position?: { x: number; y: number }) => {
+  const doAddNode = useCallback((def: NodeDef, position?: { x: number; y: number }) => {
     const pos = position ?? { x: 200 + Math.random() * 200, y: 150 + Math.random() * 150 };
     const newNode: ReactFlowNode = {
       id: `node_${Date.now()}`,
@@ -189,6 +208,27 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     };
     setNodes((nds) => [...nds, newNode]);
   }, []);
+
+  const addNodeFromDef = useCallback((def: NodeDef, position?: { x: number; y: number }) => {
+    const pkg = getNodePkg(def.type);
+    if (pkg && !installedPkgs.includes(pkg.toLowerCase())) {
+      setDepDialog({ def, pkg, position });
+      return;
+    }
+    doAddNode(def, position);
+  }, [installedPkgs, doAddNode]);
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      const raw = e.dataTransfer.getData("application/flowpython-node");
+      if (!raw) return;
+      const def: NodeDef = JSON.parse(raw);
+      const position = reactFlow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      addNodeFromDef(def, position);
+    },
+    [reactFlow, addNodeFromDef]
+  );
 
   // ── Save ──────────────────────────────────────────────────────────
   const handleSave = async () => {
@@ -314,8 +354,80 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     return <div className="flex items-center justify-center h-full text-muted-foreground text-sm">Carregando editor...</div>;
   }
 
+  // ── Dep-install confirmation handler ─────────────────────────────
+  const handleInstallDep = async (skipInstall: boolean) => {
+    if (!depDialog) return;
+    const { def, pkg, position } = depDialog;
+    if (!skipInstall) {
+      setDepInstalling(true);
+      try {
+        const res = await fetch(`/api/workflows/${workflowId}/packages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: pkg, version: "" }),
+        });
+        if (res.ok) {
+          setInstalledPkgs((prev) => [...prev, pkg.toLowerCase()]);
+          toast({ title: "Biblioteca instalada", description: `${pkg} instalada com sucesso no ambiente do workflow.` });
+        } else {
+          const err = await res.json().catch(() => ({ error: "Erro desconhecido" }));
+          toast({ title: "Erro ao instalar", description: err.error ?? "Falha na instalação.", variant: "destructive" });
+        }
+      } catch {
+        toast({ title: "Erro de rede", description: "Não foi possível instalar a biblioteca.", variant: "destructive" });
+      } finally {
+        setDepInstalling(false);
+      }
+    }
+    setDepDialog(null);
+    doAddNode(def, position);
+  };
+
   return (
     <VarColorCtx.Provider value={varColorMap}>
+
+    {/* ── Dependency installation dialog ── */}
+    <AlertDialog open={!!depDialog} onOpenChange={(o) => { if (!o && !depInstalling) setDepDialog(null); }}>
+      <AlertDialogContent style={{ maxWidth: 440 }}>
+        <AlertDialogHeader>
+          <AlertDialogTitle style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Package className="h-5 w-5" style={{ color: "#f472b6" }} />
+            Dependência Python detectada
+          </AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div style={{ lineHeight: 1.6 }}>
+              <p>O nodo <strong>{depDialog?.def.label}</strong> requer a biblioteca:</p>
+              <code style={{
+                display: "inline-block", margin: "8px 0",
+                padding: "4px 10px", borderRadius: 6,
+                background: "hsl(var(--muted))", color: "#f472b6",
+                fontWeight: 700, fontSize: 14,
+              }}>{depDialog?.pkg}</code>
+              <p style={{ marginTop: 4 }}>
+                Deseja instalá-la agora no ambiente virtual deste workflow?
+                A instalação pode levar alguns segundos.
+              </p>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter style={{ gap: 8 }}>
+          <Button variant="ghost" size="sm" onClick={() => setDepDialog(null)} disabled={depInstalling}>
+            Cancelar
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => handleInstallDep(true)} disabled={depInstalling}>
+            Adicionar sem instalar
+          </Button>
+          <Button size="sm" onClick={() => handleInstallDep(false)} disabled={depInstalling}
+            style={{ background: "#f472b6", color: "#000" }}>
+            {depInstalling
+              ? <><Loader2 className="h-4 w-4 animate-spin" style={{ marginRight: 6 }} />Instalando...</>
+              : <><Download className="h-4 w-4" style={{ marginRight: 6 }} />Instalar e adicionar</>
+            }
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
     <div className="flex h-full w-full" style={{ overflow: "hidden" }}>
       {/* Node palette */}
       <NodePalette onAddNode={(def) => addNodeFromDef(def)} />
