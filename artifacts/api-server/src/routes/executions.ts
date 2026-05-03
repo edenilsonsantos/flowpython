@@ -1189,7 +1189,7 @@ async function runWorkflow({
               // Pre-install requests so http_request nodes work without explicit pip_install
               await new Promise<void>((resolve) => {
                 const pip = path.join(venvDir, "bin", "pip");
-                const proc = spawn(pip, ["install", "requests"], { timeout: 60000 });
+                const proc = spawn(pip, ["install", "requests"], { timeout: 60000, env: { ...process.env, PIP_USER: "0" } });
                 proc.on("close", () => resolve());
                 proc.on("error", () => resolve());
               });
@@ -1240,7 +1240,7 @@ async function runWorkflow({
           if (pipArgs.length > 0) {
             await addLog(executionId, node.id, "info", `Executando: pip ${pipArgs.join(" ")}`);
             const result = await new Promise<{ success: boolean; output: string; error: string | null }>((resolve) => {
-              const proc = spawn(pipBin, pipArgs, { timeout: 120000 });
+              const proc = spawn(pipBin, pipArgs, { timeout: 120000, env: { ...process.env, PIP_USER: "0" } });
               let stdout = ""; let stderr = "";
               proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
               proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });

@@ -68,7 +68,7 @@ router.post("/workflows/:id/packages", async (req, res) => {
     const packageSpec = version ? `${name}==${version}` : name;
 
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn(pipBin, ["install", packageSpec, "--quiet"]);
+      const proc = spawn(pipBin, ["install", packageSpec, "--quiet"], { env: { ...process.env, PIP_USER: "0" } });
       proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`pip install failed: ${code}`))));
       proc.on("error", reject);
     });
@@ -120,7 +120,7 @@ router.delete("/workflows/:id/packages/:packageName", async (req, res) => {
 
     try {
       await new Promise<void>((resolve, reject) => {
-        const proc = spawn(pipBin, ["uninstall", packageName, "-y", "--quiet"]);
+        const proc = spawn(pipBin, ["uninstall", packageName, "-y", "--quiet"], { env: { ...process.env, PIP_USER: "0" } });
         proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`pip uninstall failed`))));
         proc.on("error", reject);
       });
