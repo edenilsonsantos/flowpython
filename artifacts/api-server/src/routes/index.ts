@@ -7,6 +7,7 @@ import variablesRouter from "./variables";
 import credentialsRouter from "./credentials";
 import packagesRouter from "./packages";
 import databaseRouter from "./database";
+import aiRouter from "./ai";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(variablesRouter);
 router.use(credentialsRouter);
 router.use(packagesRouter);
 router.use(databaseRouter);
+router.use(aiRouter);
 
 export default router;

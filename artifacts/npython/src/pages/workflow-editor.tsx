@@ -39,6 +39,7 @@ import {
   FlaskConical, Pin, PinOff, CheckCircle2, XCircle, Loader2, Plus, Package,
   Eye, EyeOff, Lock, ShieldOff, Shield, Database,
   ChevronDown, ChevronRight, Network, Copy, Zap, Download, PackageCheck,
+  Bot, Wand2, Sparkles,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -1191,6 +1192,216 @@ function UpstreamVarPicker({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface AiProviderInfo {
+  id: string;
+  name: string;
+  color: string;
+  models: string[];
+  model: string;
+  enabled: boolean;
+  hasKey: boolean;
+}
+
+function AiCodeAssistant({ onCodeGenerated }: { onCodeGenerated: (code: string) => void }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [providers, setProviders] = useState<AiProviderInfo[]>([]);
+  const [loadingProviders, setLoadingProviders] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState("");
+  const [selectedModel, setSelectedModel] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [generating, setGenerating] = useState(false);
+
+  const activeProviders = providers.filter((p) => p.enabled && p.hasKey);
+
+  const fetchProviders = useCallback(async () => {
+    setLoadingProviders(true);
+    try {
+      const res = await fetch("/api/settings/ai-providers");
+      if (!res.ok) return;
+      const data: AiProviderInfo[] = await res.json();
+      setProviders(data);
+      const active = data.filter((p) => p.enabled && p.hasKey);
+      if (active.length > 0 && !selectedProvider) {
+        setSelectedProvider(active[0].id);
+        setSelectedModel(active[0].model || active[0].models[0] || "");
+      }
+    } catch {
+    } finally {
+      setLoadingProviders(false);
+    }
+  }, [selectedProvider]);
+
+  useEffect(() => {
+    if (open && providers.length === 0) fetchProviders();
+  }, [open, providers.length, fetchProviders]);
+
+  const handleProviderChange = (id: string) => {
+    setSelectedProvider(id);
+    const p = activeProviders.find((p) => p.id === id);
+    setSelectedModel(p?.model || p?.models[0] || "");
+  };
+
+  const generate = async () => {
+    if (!prompt.trim()) {
+      toast({ title: "Descreva o que deseja gerar", variant: "destructive" });
+      return;
+    }
+    if (!selectedProvider || !selectedModel) {
+      toast({ title: "Selecione um provedor e modelo", variant: "destructive" });
+      return;
+    }
+    setGenerating(true);
+    try {
+      const res = await fetch("/api/ai/generate-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: selectedProvider, model: selectedModel, prompt: prompt.trim() }),
+      });
+      const data = await res.json() as { code?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Erro ao gerar código");
+      if (data.code) {
+        onCodeGenerated(data.code);
+        toast({ title: "Código gerado!", description: "O código foi inserido no editor. Revise antes de executar." });
+      }
+    } catch (err: any) {
+      toast({ title: "Erro", description: err.message ?? "Falha ao gerar código", variant: "destructive" });
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const providerColor = activeProviders.find((p) => p.id === selectedProvider)?.color ?? "#a78bfa";
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        style={{
+          display: "flex", alignItems: "center", gap: 7, padding: "7px 12px",
+          borderRadius: 8, border: "1px dashed rgba(167,139,250,0.4)",
+          background: "rgba(167,139,250,0.05)", cursor: "pointer", width: "100%",
+          color: "#a78bfa", fontSize: 12, fontWeight: 600, transition: "all 0.15s",
+        }}
+      >
+        <Sparkles size={13} />
+        Assistente IA — gerar código
+        <span style={{ marginLeft: "auto", opacity: 0.6, fontSize: 11 }}>clique para abrir</span>
+      </button>
+    );
+  }
+
+  return (
+    <div style={{
+      border: `1px solid ${providerColor}40`,
+      borderRadius: 10,
+      background: "rgba(0,0,0,0.25)",
+      overflow: "hidden",
+    }}>
+      {/* Header */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "10px 14px",
+        borderBottom: `1px solid ${providerColor}25`,
+        background: `${providerColor}10`,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, color: providerColor }}>
+          <Bot size={15} />
+          <span style={{ fontSize: 13, fontWeight: 700 }}>Assistente IA</span>
+        </div>
+        <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "hsl(var(--muted-foreground))", padding: 2 }}>
+          <X size={14} />
+        </button>
+      </div>
+
+      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+        {/* Provider + Model selector */}
+        {loadingProviders ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "hsl(var(--muted-foreground))", fontSize: 12 }}>
+            <Loader2 size={13} className="animate-spin" /> Carregando provedores...
+          </div>
+        ) : activeProviders.length === 0 ? (
+          <div style={{
+            padding: "10px 12px", borderRadius: 7, background: "rgba(239,68,68,0.08)",
+            border: "1px solid rgba(239,68,68,0.2)", fontSize: 12, color: "#f87171",
+          }}>
+            Nenhum provedor de IA ativo. Configure em{" "}
+            <a href="/settings" style={{ textDecoration: "underline", cursor: "pointer" }}>Settings → Integrações de IA</a>.
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "hsl(var(--muted-foreground))", marginBottom: 5 }}>Provedor</div>
+                <Select value={selectedProvider} onValueChange={handleProviderChange}>
+                  <SelectTrigger style={{ fontSize: 12, height: 32 }}>
+                    <SelectValue placeholder="Provedor..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {activeProviders.map((p) => (
+                      <SelectItem key={p.id} value={p.id} style={{ fontSize: 12 }}>
+                        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: p.color, display: "inline-block", flexShrink: 0 }} />
+                          {p.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "hsl(var(--muted-foreground))", marginBottom: 5 }}>Modelo</div>
+                <Select value={selectedModel} onValueChange={setSelectedModel}>
+                  <SelectTrigger style={{ fontSize: 12, height: 32 }}>
+                    <SelectValue placeholder="Modelo..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(activeProviders.find((p) => p.id === selectedProvider)?.models ?? []).map((m) => (
+                      <SelectItem key={m} value={m} style={{ fontSize: 11, fontFamily: "monospace" }}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Prompt */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "hsl(var(--muted-foreground))", marginBottom: 5 }}>
+                Descreva o que o código deve fazer
+              </div>
+              <Textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder={`Ex: "Receba uma lista de emails de pipeline['emails'], filtre apenas os válidos e salve em pipeline['valid_emails']"`}
+                rows={4}
+                style={{ fontSize: 12, resize: "vertical", minHeight: 80 }}
+                onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate(); }}
+              />
+              <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 3 }}>
+                Dica: Ctrl+Enter para gerar
+              </div>
+            </div>
+
+            <Button
+              size="sm"
+              onClick={generate}
+              disabled={generating || !prompt.trim()}
+              style={{ gap: 7, background: providerColor, color: "#fff", border: "none", fontWeight: 700 }}
+            >
+              {generating
+                ? <><Loader2 size={13} className="animate-spin" /> Gerando...</>
+                : <><Wand2 size={13} /> Gerar código</>
+              }
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function NodeConfigPanel({
   node,
   workflowId,
@@ -1247,11 +1458,20 @@ function NodeConfigPanel({
       {type === "trigger_subflow" && <InfoBox>Este workflow é chamado como sub-flow por outro workflow.</InfoBox>}
 
       {type === "code" && (
-        <Field label="Código Python">
-          <div style={{ border: "1px solid hsl(var(--border))", borderRadius: 6, overflow: "hidden" }}>
-            <CodeMirror value={(cfg.code as string) ?? ""} height="220px" theme="dark" extensions={[python(), varDropExtension]} onChange={(val) => onUpdateConfig("code", val)} />
-          </div>
-        </Field>
+        <>
+          <Field label="Código Python">
+            <div style={{ border: "1px solid hsl(var(--border))", borderRadius: 6, overflow: "hidden" }}>
+              <CodeMirror
+                value={(cfg.code as string) ?? ""}
+                height="220px"
+                theme="dark"
+                extensions={[python(), varDropExtension]}
+                onChange={(val) => onUpdateConfig("code", val)}
+              />
+            </div>
+          </Field>
+          <AiCodeAssistant onCodeGenerated={(code) => onUpdateConfig("code", code)} />
+        </>
       )}
 
       {type === "condition" && (

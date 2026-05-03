@@ -64,6 +64,16 @@ Each workflow gets its own venv at: `/tmp/npython-venvs/<workflowId>/`
 
 Set `NPYTHON_VENVS_DIR` env var to change the base directory.
 
+## AI Provider Integration
+
+- Settings page (`/settings`) → "Integrações de IA" section: configure OpenAI, Google Gemini, Anthropic
+- Each provider card: API key (password input + show/hide), model selector, enable toggle, save/clear key
+- Keys stored in DB (`ai_providers` table), never in env vars
+- Python Code nodes have an "Assistente IA" collapsible panel below the editor
+- Panel shows only active/configured providers; user picks provider + model, writes a prompt, clicks "Gerar"
+- Generated code fills the CodeMirror editor directly; user can edit freely before/after generation
+- Ctrl+Enter shortcut to generate from the prompt textarea
+
 ## API Routes
 
 - `GET/POST /api/workflows` — list/create workflows
@@ -86,9 +96,12 @@ Set `NPYTHON_VENVS_DIR` env var to change the base directory.
 - `PUT/DELETE /api/variables/:id` — update/delete variable
 - `GET/POST /api/credentials` — credentials (values masked in responses)
 - `PUT/DELETE /api/credentials/:id` — update/delete credential
+- `GET /api/settings/ai-providers` — list all AI provider configs (key masked as hasKey boolean)
+- `PUT /api/settings/ai-providers/:provider` — update provider (apiKey, model, enabled); send apiKey="CLEAR" to remove key
+- `POST /api/ai/generate-code` — generate Python code via selected AI provider (`{provider, model, prompt}` → `{code}`)
 
 ## DB Schema
 
-Tables: `workflows`, `nodes`, `edges`, `executions`, `log_lines`, `variables`, `credentials`, `packages`
+Tables: `workflows`, `nodes`, `edges`, `executions`, `log_lines`, `variables`, `credentials`, `packages`, `ai_providers`
 
 See `references/openapi.md` for workspace structure details.
