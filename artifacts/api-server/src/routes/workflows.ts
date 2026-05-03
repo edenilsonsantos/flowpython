@@ -144,7 +144,7 @@ router.put("/workflows/:id", async (req, res) => {
     const { id } = req.params;
     const { name, description, active, tags, nodes, edges } = req.body;
 
-    const updates: Record<string, unknown> = {};
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (name !== undefined) updates.name = name;
     if (description !== undefined) updates.description = description;
     if (active !== undefined) updates.active = active;

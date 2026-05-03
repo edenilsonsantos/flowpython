@@ -292,7 +292,19 @@ router.post("/workflows/:workflowId/nodes/:nodeId/execute", async (req, res) => 
       scriptContent = buildHttpRequestScript(config, inputData as Record<string, unknown>);
     } else {
       const code = (config.code as string) ?? "";
-      scriptContent = `import json, sys\n\n_input = ${JSON.stringify(inputData)}\n\n${code}\n`;
+      // Inject pipeline and workflow context the same way the full execution engine does
+      const pipelineData = (inputData as any)?.pipeline ?? inputData ?? {};
+      const workflowData = (inputData as any)?.workflow ?? {};
+      const pipelineFile = path.join(tmpDir, "pipeline.json");
+      const workflowFile = path.join(tmpDir, "workflow.json");
+      await fs.writeFile(pipelineFile, JSON.stringify(pipelineData), "utf8");
+      await fs.writeFile(workflowFile, JSON.stringify(workflowData), "utf8");
+      scriptContent = [
+        "import json as _json",
+        `with open(${JSON.stringify(pipelineFile)}) as _f: pipeline = _json.load(_f)`,
+        `with open(${JSON.stringify(workflowFile)}) as _f: workflow = _json.load(_f)`,
+        code,
+      ].join("\n");
     }
     await fs.writeFile(scriptPath, scriptContent, "utf8");
 
