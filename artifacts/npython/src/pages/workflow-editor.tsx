@@ -39,7 +39,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
-import CodeMirror from "@uiw/react-codemirror";
+import CodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { python } from "@codemirror/lang-python";
 
 import { CanvasNode } from "@/components/canvas-node";
@@ -512,6 +512,134 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
 
 // ─── Variable Preview System ──────────────────────────────────────────────────
 
+// Extension that makes CodeMirror editors accept variable chip drops
+const varDropExtension = EditorView.domEventHandlers({
+  dragover(event) {
+    if (event.dataTransfer?.types.includes("application/flowpython-var")) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    }
+  },
+  drop(event, view) {
+    const ref = event.dataTransfer?.getData("application/flowpython-var");
+    if (ref) {
+      event.preventDefault();
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.doc.length;
+      view.dispatch({
+        changes: { from: pos, insert: ref },
+        selection: { anchor: pos + ref.length },
+      });
+    }
+  },
+});
+
+// Parse a string into text segments and pipeline variable references
+type VarSegment = { isVar: true; varName: string } | { isVar: false; text: string };
+function parseVarRefs(value: string): VarSegment[] {
+  const pattern = /pipeline\["([^"]+)"\]/g;
+  const segments: VarSegment[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(value)) !== null) {
+    if (match.index > lastIndex) segments.push({ isVar: false, text: value.slice(lastIndex, match.index) });
+    segments.push({ isVar: true, varName: match[1] });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < value.length) segments.push({ isVar: false, text: value.slice(lastIndex) });
+  return segments;
+}
+
+// Input field that renders pipeline["x"] variable references as colored visual chips when blurred
+function VarTokenInput({
+  value, onChange, placeholder, style,
+}: {
+  value: string; onChange: (v: string) => void; placeholder?: string; style?: React.CSSProperties;
+}) {
+  const [focused, setFocused] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const segments = useMemo(() => parseVarRefs(value ?? ""), [value]);
+  const showTokenView = !focused && segments.some((s) => s.isVar);
+
+  const handleDrop = (e: React.DragEvent) => {
+    const ref = e.dataTransfer.getData("application/flowpython-var");
+    if (!ref) return;
+    e.preventDefault();
+    const el = inputRef.current;
+    if (el && focused) {
+      const start = el.selectionStart ?? (value ?? "").length;
+      const end = el.selectionEnd ?? start;
+      const newVal = (value ?? "").slice(0, start) + ref + (value ?? "").slice(end);
+      onChange(newVal);
+      requestAnimationFrame(() => el.setSelectionRange(start + ref.length, start + ref.length));
+    } else {
+      onChange((value ?? "") + ref);
+    }
+  };
+
+  const borderStyle = focused
+    ? "1px solid hsl(var(--ring))"
+    : "1px solid hsl(var(--border))";
+
+  return (
+    <div
+      style={{ position: "relative", ...style }}
+      onDragOver={(e) => { if (e.dataTransfer.types.includes("application/flowpython-var")) e.preventDefault(); }}
+      onDrop={handleDrop}
+    >
+      {/* Real input — hidden when showing token view, but always in DOM for ref/focus */}
+      <input
+        ref={inputRef}
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => { setTimeout(() => setFocused(false), 80); }}
+        placeholder={showTokenView ? "" : placeholder}
+        style={{
+          display: showTokenView ? "none" : "block",
+          width: "100%", height: 36, padding: "0 10px",
+          background: "hsl(var(--background))",
+          border: borderStyle,
+          borderRadius: 6, color: "hsl(var(--foreground))",
+          fontSize: 12, fontFamily: "monospace", outline: "none",
+          boxSizing: "border-box",
+        }}
+      />
+      {/* Token view — shown when value contains pipeline refs and input is not focused */}
+      {showTokenView && (
+        <div
+          onClick={() => { setFocused(true); requestAnimationFrame(() => inputRef.current?.focus()); }}
+          title="Clique para editar"
+          style={{
+            minHeight: 36, padding: "5px 10px",
+            background: "hsl(var(--background))",
+            border: "1px solid hsl(var(--border))",
+            borderRadius: 6,
+            display: "flex", flexWrap: "wrap", alignItems: "center", gap: 3,
+            cursor: "text",
+          }}
+        >
+          {segments.map((seg, i) =>
+            seg.isVar ? (
+              <span key={i} style={{
+                display: "inline-flex", alignItems: "center", gap: 3,
+                padding: "1px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
+                background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.35)",
+                color: "#a78bfa", fontFamily: "monospace",
+              }}>
+                <Network size={9} /> {seg.varName}
+              </span>
+            ) : (
+              seg.text
+                ? <span key={i} style={{ fontSize: 12, fontFamily: "monospace", color: "hsl(var(--foreground))" }}>{seg.text}</span>
+                : null
+            )
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function insertVarRef(ref: string, toast: ReturnType<typeof useToast>["toast"]) {
   const el = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
   if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA") && !el.readOnly) {
@@ -945,26 +1073,26 @@ function NodeConfigPanel({
       {type === "code" && (
         <Field label="Código Python">
           <div style={{ border: "1px solid hsl(var(--border))", borderRadius: 6, overflow: "hidden" }}>
-            <CodeMirror value={(cfg.code as string) ?? ""} height="220px" theme="dark" extensions={[python()]} onChange={(val) => onUpdateConfig("code", val)} />
+            <CodeMirror value={(cfg.code as string) ?? ""} height="220px" theme="dark" extensions={[python(), varDropExtension]} onChange={(val) => onUpdateConfig("code", val)} />
           </div>
         </Field>
       )}
 
       {type === "condition" && (
         <Field label="Expressão Python (True/False)">
-          <Input value={(cfg.expression as string) ?? ""} onChange={(e) => onUpdateConfig("expression", e.target.value)} placeholder="len(result) > 0" style={{ fontFamily: "monospace" }} />
+          <VarTokenInput value={(cfg.expression as string) ?? ""} onChange={(v) => onUpdateConfig("expression", v)} placeholder="len(result) > 0" />
         </Field>
       )}
 
       {type === "loop" && (
         <Field label="Lista de itens (Python)">
-          <Input value={(cfg.itemsExpression as string) ?? ""} onChange={(e) => onUpdateConfig("itemsExpression", e.target.value)} placeholder="[1, 2, 3]" style={{ fontFamily: "monospace" }} />
+          <VarTokenInput value={(cfg.itemsExpression as string) ?? ""} onChange={(v) => onUpdateConfig("itemsExpression", v)} placeholder="[1, 2, 3]" />
         </Field>
       )}
 
       {type === "set_variable" && <>
         <Field label="Chave"><Input value={(cfg.key as string) ?? ""} onChange={(e) => onUpdateConfig("key", e.target.value)} placeholder="MY_VAR" /></Field>
-        <Field label="Valor"><Input value={(cfg.value as string) ?? ""} onChange={(e) => onUpdateConfig("value", e.target.value)} /></Field>
+        <Field label="Valor"><VarTokenInput value={(cfg.value as string) ?? ""} onChange={(v) => onUpdateConfig("value", v)} placeholder='valor ou pipeline["var"]' /></Field>
       </>}
 
       {type === "get_variable" && (
@@ -974,7 +1102,7 @@ function NodeConfigPanel({
       {type === "transform" && (
         <Field label="Código Python (variável `input`)">
           <div style={{ border: "1px solid hsl(var(--border))", borderRadius: 6, overflow: "hidden" }}>
-            <CodeMirror value={(cfg.code as string) ?? "output = input"} height="160px" theme="dark" extensions={[python()]} onChange={(val) => onUpdateConfig("code", val)} />
+            <CodeMirror value={(cfg.code as string) ?? "output = input"} height="160px" theme="dark" extensions={[python(), varDropExtension]} onChange={(val) => onUpdateConfig("code", val)} />
           </div>
         </Field>
       )}
@@ -1345,7 +1473,7 @@ function SwitchNodeConfig({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <Field label="Variável de entrada (pipeline)">
-        <Input value={(cfg.inputVar as string) ?? ""} onChange={(e) => onUpdateConfig("inputVar", e.target.value)} placeholder="myValue" style={{ fontFamily: "monospace" }} />
+        <VarTokenInput value={(cfg.inputVar as string) ?? ""} onChange={(v) => onUpdateConfig("inputVar", v)} placeholder='myValue ou pipeline["var"]' />
       </Field>
       <div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -1359,7 +1487,7 @@ function SwitchNodeConfig({
         )}
         {conditions.map((cond, idx) => (
           <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-            <Input value={cond.expression} onChange={(e) => update(idx, "expression", e.target.value)} placeholder="value > 100" style={{ fontFamily: "monospace", fontSize: 11, flex: 2 }} />
+            <VarTokenInput value={cond.expression} onChange={(v) => update(idx, "expression", v)} placeholder="value > 100" style={{ flex: 2 }} />
             <Input value={cond.label} onChange={(e) => update(idx, "label", e.target.value)} placeholder="branch" style={{ fontFamily: "monospace", fontSize: 11, flex: 1 }} />
             <Button size="icon" variant="ghost" onClick={() => remove(idx)} style={{ height: 28, width: 28, flexShrink: 0 }}>
               <Trash2 size={12} />
@@ -1445,7 +1573,7 @@ function DataNodeConfig({
 }) {
   const inputVarField = (
     <Field label="Variável de entrada (pipeline)">
-      <Input value={(cfg.inputVar as string) ?? ""} onChange={(e) => onUpdateConfig("inputVar", e.target.value)} placeholder="items" style={{ fontFamily: "monospace" }} />
+      <VarTokenInput value={(cfg.inputVar as string) ?? ""} onChange={(v) => onUpdateConfig("inputVar", v)} placeholder='items ou pipeline["var"]' />
     </Field>
   );
   const outputVarField = (
@@ -1458,7 +1586,7 @@ function DataNodeConfig({
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {inputVarField}
       <Field label="Expressão Python por item (variável: item)">
-        <Input value={(cfg.expression as string) ?? ""} onChange={(e) => onUpdateConfig("expression", e.target.value)} placeholder="item['active'] == True" style={{ fontFamily: "monospace" }} />
+        <VarTokenInput value={(cfg.expression as string) ?? ""} onChange={(v) => onUpdateConfig("expression", v)} placeholder="item['active'] == True" />
       </Field>
       {outputVarField}
       <InfoBox>Equivale a <code>[item for item in lista if (<em>expressão</em>)]</code>. Use <code>item</code> para acessar cada elemento.</InfoBox>
@@ -1623,12 +1751,14 @@ function KeyValueEditor({
             placeholder={keyPlaceholder}
             style={{ fontFamily: "monospace", fontSize: 11, flex: 1, opacity: p.enabled ? 1 : 0.45, height: 30 }}
           />
-          <Input
-            value={p.value}
-            onChange={(e) => update(i, "value", e.target.value)}
-            placeholder={valuePlaceholder}
-            style={{ fontFamily: "monospace", fontSize: 11, flex: 1.5, opacity: p.enabled ? 1 : 0.45, height: 30 }}
-          />
+          <div style={{ flex: 1.5, opacity: p.enabled ? 1 : 0.45 }}>
+            <VarTokenInput
+              value={p.value}
+              onChange={(v) => update(i, "value", v)}
+              placeholder={valuePlaceholder}
+              style={{ fontSize: 11, height: 30 }}
+            />
+          </div>
           <Button size="icon" variant="ghost" onClick={() => remove(i)} style={{ height: 28, width: 28, flexShrink: 0 }}>
             <Trash2 size={11} className="text-destructive" />
           </Button>
@@ -2001,11 +2131,11 @@ function HttpRequestConfig({
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>URL</label>
-          <Input
+          <VarTokenInput
             value={(cfg.url as string) ?? ""}
-            onChange={(e) => onUpdateConfig("url", e.target.value)}
+            onChange={(v) => onUpdateConfig("url", v)}
             placeholder="https://api.example.com/v1/resource"
-            style={{ fontSize: 12, height: 32, fontFamily: "monospace" }}
+            style={{ fontSize: 12 }}
           />
         </div>
       </div>
