@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, createContext, useContext } from "react";
 import { useParams, useLocation } from "wouter";
 import ReactFlow, {
   Background,
@@ -298,11 +298,24 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
 
   const hasTrigger = nodes.some((n) => isTriggerType(n.data.type as string));
 
+  // Map each pipeline variable name to its source node's color + label
+  const varColorMap = useMemo<Record<string, VarColorInfo>>(() => {
+    const map: Record<string, VarColorInfo> = {};
+    for (const [nodeId, out] of Object.entries(lastRunOutputs)) {
+      const color = nodeColorFromId(nodeId);
+      for (const varName of Object.keys(out.pipeline)) {
+        map[varName] = { color, nodeLabel: out.label, nodeId };
+      }
+    }
+    return map;
+  }, [lastRunOutputs]);
+
   if (isLoading) {
     return <div className="flex items-center justify-center h-full text-muted-foreground text-sm">Carregando editor...</div>;
   }
 
   return (
+    <VarColorCtx.Provider value={varColorMap}>
     <div className="flex h-full w-full" style={{ overflow: "hidden" }}>
       {/* Node palette */}
       <NodePalette onAddNode={(def) => addNodeFromDef(def)} />
@@ -505,12 +518,35 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         </div>
       )}
     </div>
+    </VarColorCtx.Provider>
   );
 }
 
 // ─── Config panel ─────────────────────────────────────────────────────────────
 
 // ─── Variable Preview System ──────────────────────────────────────────────────
+
+// Stable palette: each source node gets a unique accent color derived from its ID
+const NODE_PALETTE = [
+  "#14b8a6", // teal
+  "#f97316", // orange
+  "#06b6d4", // cyan
+  "#f43f5e", // rose
+  "#84cc16", // lime
+  "#eab308", // yellow
+  "#8b5cf6", // violet
+  "#10b981", // emerald
+  "#3b82f6", // blue
+  "#ec4899", // pink
+];
+function nodeColorFromId(nodeId: string): string {
+  let h = 0;
+  for (let i = 0; i < nodeId.length; i++) h = (h * 31 + nodeId.charCodeAt(i)) & 0xffff;
+  return NODE_PALETTE[h % NODE_PALETTE.length];
+}
+
+type VarColorInfo = { color: string; nodeLabel: string; nodeId: string };
+const VarColorCtx = createContext<Record<string, VarColorInfo>>({});
 
 // Extension that makes CodeMirror editors accept variable chip drops
 const varDropExtension = EditorView.domEventHandlers({
@@ -559,6 +595,7 @@ function VarTokenInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const segments = useMemo(() => parseVarRefs(value ?? ""), [value]);
   const showTokenView = !focused && segments.some((s) => s.isVar);
+  const varColorMap = useContext(VarColorCtx);
 
   const handleDrop = (e: React.DragEvent) => {
     const ref = e.dataTransfer.getData("application/flowpython-var");
@@ -618,22 +655,35 @@ function VarTokenInput({
             cursor: "text",
           }}
         >
-          {segments.map((seg, i) =>
-            seg.isVar ? (
-              <span key={i} style={{
-                display: "inline-flex", alignItems: "center", gap: 3,
-                padding: "1px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
-                background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.35)",
-                color: "#a78bfa", fontFamily: "monospace",
-              }}>
-                <Network size={9} /> {seg.varName}
-              </span>
-            ) : (
-              seg.text
+          {segments.map((seg, i) => {
+            if (!seg.isVar) {
+              return seg.text
                 ? <span key={i} style={{ fontSize: 12, fontFamily: "monospace", color: "hsl(var(--foreground))" }}>{seg.text}</span>
-                : null
-            )
-          )}
+                : null;
+            }
+            const meta = varColorMap[seg.varName];
+            const chipColor = meta?.color ?? "#a78bfa";
+            const chipLabel = meta?.nodeLabel;
+            const truncChipLabel = chipLabel && chipLabel.length > 14 ? chipLabel.slice(0, 13) + "…" : chipLabel;
+            return (
+              <span key={i} style={{
+                display: "inline-flex", flexDirection: "column", gap: 0,
+                padding: "2px 8px 2px 6px", borderRadius: 4,
+                background: `${chipColor}12`, border: `1px solid ${chipColor}40`,
+                borderLeft: `3px solid ${chipColor}`,
+                fontFamily: "monospace",
+              }}>
+                {truncChipLabel && (
+                  <span style={{ fontSize: 8, fontWeight: 700, color: chipColor, textTransform: "uppercase", letterSpacing: "0.06em", lineHeight: 1, opacity: 0.85 }}>
+                    {truncChipLabel}
+                  </span>
+                )}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, fontWeight: 600, color: chipColor }}>
+                  <Network size={9} /> {seg.varName}
+                </span>
+              </span>
+            );
+          })}
         </div>
       )}
     </div>
@@ -675,12 +725,15 @@ function getVarMeta(value: unknown): { type: string; color: string; preview: str
 }
 
 function VarChip({
-  varName, value, onInsert,
+  varName, value, onInsert, nodeColor, nodeLabel,
 }: {
   varName: string; value: unknown; onInsert: (ref: string) => void;
+  nodeColor?: string; nodeLabel?: string;
 }) {
   const ref = `pipeline["${varName}"]`;
-  const { type, color, preview } = getVarMeta(value);
+  const { type, color: typeColor, preview } = getVarMeta(value);
+  const accent = nodeColor ?? typeColor;
+  const truncLabel = nodeLabel && nodeLabel.length > 16 ? nodeLabel.slice(0, 15) + "…" : nodeLabel;
   return (
     <div
       draggable
@@ -690,18 +743,29 @@ function VarChip({
         e.dataTransfer.effectAllowed = "copy";
       }}
       onClick={() => onInsert(ref)}
-      title={`Clique ou arraste → ${ref}`}
+      title={`${ref}${nodeLabel ? `  ←  ${nodeLabel}` : ""}`}
       style={{
-        display: "inline-flex", alignItems: "center", gap: 4,
-        padding: "3px 7px", borderRadius: 6, marginBottom: 4, marginRight: 4,
-        border: `1px solid ${color}44`, background: `${color}12`,
+        display: "inline-flex", flexDirection: "column", gap: 1,
+        padding: "3px 8px 3px 6px", borderRadius: 6, marginBottom: 4, marginRight: 4,
+        border: `1px solid ${accent}40`, background: `${accent}10`,
+        borderLeft: `3px solid ${accent}`,
         cursor: "grab", userSelect: "none", maxWidth: "100%",
-        transition: "background 0.1s",
+        transition: "background 0.12s",
       }}
     >
-      <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 600, color, flexShrink: 0 }}>{varName}</span>
-      <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: `${color}22`, color, fontWeight: 700, flexShrink: 0 }}>{type}</span>
-      <span style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 100 }}>{preview}</span>
+      {truncLabel && (
+        <span style={{
+          fontSize: 8, fontWeight: 700, color: accent, textTransform: "uppercase",
+          letterSpacing: "0.06em", lineHeight: 1, opacity: 0.85,
+        }}>
+          {truncLabel}
+        </span>
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 600, color: accent, flexShrink: 0 }}>{varName}</span>
+        <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: `${typeColor}25`, color: typeColor, fontWeight: 700, flexShrink: 0 }}>{type}</span>
+        <span style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 88 }}>{preview}</span>
+      </div>
     </div>
   );
 }
@@ -791,7 +855,7 @@ function NodeOutputPreview({
             Clique ou arraste para inserir no campo focado
           </div>
           <div style={{ display: "flex", flexWrap: "wrap" }}>
-            {vars.map(([k, v]) => <VarChip key={k} varName={k} value={v} onInsert={onInsert} />)}
+            {vars.map(([k, v]) => <VarChip key={k} varName={k} value={v} onInsert={onInsert} nodeColor={nodeColorFromId(nodeId)} nodeLabel={out.label} />)}
           </div>
         </div>
       )}
@@ -998,7 +1062,7 @@ function UpstreamVarPicker({
                 {isNodeOpen && (
                   <div style={{ padding: "4px 12px 8px", display: "flex", flexWrap: "wrap" }}>
                     {vars.length > 0 ? (
-                      vars.map(([k, v]) => <VarChip key={k} varName={k} value={v} onInsert={onInsert} />)
+                      vars.map(([k, v]) => <VarChip key={k} varName={k} value={v} onInsert={onInsert} nodeColor={nodeColorFromId(id)} nodeLabel={label} />)
                     ) : (
                       <span style={{ fontSize: 10, color: "hsl(var(--muted-foreground))" }}>sem variáveis</span>
                     )}
