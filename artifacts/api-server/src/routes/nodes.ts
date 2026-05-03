@@ -292,18 +292,33 @@ router.post("/workflows/:workflowId/nodes/:nodeId/execute", async (req, res) => 
       scriptContent = buildHttpRequestScript(config, inputData as Record<string, unknown>);
     } else {
       const code = (config.code as string) ?? "";
-      // Inject pipeline and workflow context the same way the full execution engine does
       const pipelineData = (inputData as any)?.pipeline ?? inputData ?? {};
       const workflowData = (inputData as any)?.workflow ?? {};
       const pipelineFile = path.join(tmpDir, "pipeline.json");
       const workflowFile = path.join(tmpDir, "workflow.json");
       await fs.writeFile(pipelineFile, JSON.stringify(pipelineData), "utf8");
       await fs.writeFile(workflowFile, JSON.stringify(workflowData), "utf8");
+      // Wrap user code in a function so `return` works at the top level
+      const _indented = code.trim() === ""
+        ? "    pass"
+        : code.split("\n").map((l) => "    " + l).join("\n");
       scriptContent = [
         "import json as _json",
         `with open(${JSON.stringify(pipelineFile)}) as _f: pipeline = _json.load(_f)`,
         `with open(${JSON.stringify(workflowFile)}) as _f: workflow = _json.load(_f)`,
-        code,
+        "",
+        "def _node_code(pipeline, workflow):",
+        _indented,
+        "",
+        "_node_result = _node_code(pipeline, workflow)",
+        "if isinstance(_node_result, dict):",
+        "    pipeline.update(_node_result)",
+        "elif _node_result is not None:",
+        "    pipeline['output'] = _node_result",
+        "",
+        "try:",
+        `    with open(${JSON.stringify(path.join(tmpDir, "ctx_out.json"))}, 'w') as _f: _json.dump({'pipeline': pipeline, 'workflow': workflow}, _f)`,
+        "except Exception: pass",
       ].join("\n");
     }
     await fs.writeFile(scriptPath, scriptContent, "utf8");
@@ -344,6 +359,14 @@ router.post("/workflows/:workflowId/nodes/:nodeId/execute", async (req, res) => 
       }
     );
 
+    // Read pipeline output written by the wrapper
+    let pipelineOut: Record<string, unknown> | null = null;
+    try {
+      const outRaw = await fs.readFile(path.join(tmpDir, "ctx_out.json"), "utf8");
+      const outData = JSON.parse(outRaw) as { pipeline?: Record<string, unknown> };
+      pipelineOut = outData.pipeline ?? null;
+    } catch {}
+
     await fs.rm(tmpDir, { recursive: true, force: true });
 
     const durationMs = Date.now() - start;
@@ -351,7 +374,7 @@ router.post("/workflows/:workflowId/nodes/:nodeId/execute", async (req, res) => 
     res.json({
       success: result.success,
       output: result.output || result.error || "",
-      returnValue: null,
+      returnValue: pipelineOut,
       durationMs,
       error: result.error,
     });

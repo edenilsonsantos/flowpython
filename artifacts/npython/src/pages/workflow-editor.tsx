@@ -87,7 +87,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const [nodes, setNodes] = useState<ReactFlowNode[]>([]);
   const [edges, setEdges] = useState<ReactFlowEdge[]>([]);
   const [selectedNode, setSelectedNode] = useState<ReactFlowNode | null>(null);
-  const [testResult, setTestResult] = useState<{ output: string; success: boolean; durationMs: number } | null>(null);
+  const [testResult, setTestResult] = useState<{ output: string; success: boolean; durationMs: number; pipeline?: Record<string, unknown> | null } | null>(null);
   const [testLoading, setTestLoading] = useState(false);
   const initRef = useRef(false);
 
@@ -295,7 +295,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }
       );
       const data = await res.json();
-      setTestResult({ output: data.output ?? data.error ?? "", success: data.success, durationMs: data.durationMs ?? 0 });
+      setTestResult({ output: data.output ?? data.error ?? "", success: data.success, durationMs: data.durationMs ?? 0, pipeline: data.returnValue ?? null });
       fetchLastRunOutputs();
     } catch (e: any) {
       setTestResult({ output: e.message, success: false, durationMs: 0 });
@@ -1417,7 +1417,7 @@ function NodeConfigPanel({
   onUpdateConfig: (k: string, v: unknown) => void;
   onTestNode: () => void;
   testLoading: boolean;
-  testResult: { output: string; success: boolean; durationMs: number } | null;
+  testResult: { output: string; success: boolean; durationMs: number; pipeline?: Record<string, unknown> | null } | null;
 }) {
   const cfg = (node.data.config as Record<string, unknown>) ?? {};
   const type = node.data.type as string;
@@ -1468,6 +1468,10 @@ function NodeConfigPanel({
                 extensions={[python(), varDropExtension]}
                 onChange={(val) => onUpdateConfig("code", val)}
               />
+            </div>
+            <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 4, lineHeight: 1.5 }}>
+              Use <code style={{ color: "#a78bfa", background: "rgba(167,139,250,0.1)", padding: "1px 4px", borderRadius: 3 }}>pipeline</code> para ler/escrever dados entre nodos.
+              Retorne um dict com <code style={{ color: "#14b8a6", background: "rgba(20,184,166,0.1)", padding: "1px 4px", borderRadius: 3 }}>return {"{"}chave: valor{"}"}</code> para definir a saída do nodo.
             </div>
           </Field>
           <AiCodeAssistant onCodeGenerated={(code) => onUpdateConfig("code", code)} />
@@ -1612,8 +1616,9 @@ function NodeConfigPanel({
               borderRadius: 7,
               background: testResult.success ? "rgba(20,184,166,0.06)" : "rgba(239,68,68,0.06)",
               padding: "10px 12px",
+              display: "flex", flexDirection: "column", gap: 8,
             }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 {testResult.success
                   ? <CheckCircle2 size={13} color="#14b8a6" />
                   : <XCircle size={13} color="#ef4444" />}
@@ -1621,13 +1626,35 @@ function NodeConfigPanel({
                   {testResult.success ? "Sucesso" : "Falhou"} — {testResult.durationMs}ms
                 </span>
               </div>
-              <pre style={{
-                fontSize: 11, color: "hsl(var(--foreground))", whiteSpace: "pre-wrap",
-                wordBreak: "break-all", maxHeight: 160, overflowY: "auto", margin: 0,
-                fontFamily: "monospace",
-              }}>
-                {testResult.output || "(sem output)"}
-              </pre>
+
+              {/* stdout / stderr */}
+              {testResult.output && (
+                <pre style={{
+                  fontSize: 11, color: "hsl(var(--foreground))", whiteSpace: "pre-wrap",
+                  wordBreak: "break-all", maxHeight: 120, overflowY: "auto", margin: 0,
+                  fontFamily: "monospace",
+                }}>
+                  {testResult.output}
+                </pre>
+              )}
+
+              {/* pipeline output (return value) */}
+              {testResult.pipeline && Object.keys(testResult.pipeline).length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#14b8a6", marginBottom: 4 }}>
+                    Saída (pipeline)
+                  </div>
+                  <pre style={{
+                    fontSize: 11, color: "#a7f3d0", whiteSpace: "pre-wrap",
+                    wordBreak: "break-all", maxHeight: 160, overflowY: "auto", margin: 0,
+                    fontFamily: "monospace", background: "rgba(20,184,166,0.05)",
+                    borderRadius: 5, padding: "6px 8px",
+                    border: "1px solid rgba(20,184,166,0.2)",
+                  }}>
+                    {JSON.stringify(testResult.pipeline, null, 2)}
+                  </pre>
+                </div>
+              )}
             </div>
           )}
         </div>

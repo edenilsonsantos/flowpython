@@ -914,11 +914,23 @@ async function runWorkflow({
           await fs.writeFile(pipelineFile, JSON.stringify(pipelineContext), "utf8");
           await fs.writeFile(workflowFile, JSON.stringify(workflowContext), "utf8");
 
+          // Wrap user code in a function so `return` works at the top level
+          const _indented = userCode.trim() === ""
+            ? "    pass"
+            : userCode.split("\n").map((l) => "    " + l).join("\n");
           const wrappedCode = [
             "import json as _json",
             `with open(${JSON.stringify(pipelineFile)}) as _f: pipeline = _json.load(_f)`,
             `with open(${JSON.stringify(workflowFile)}) as _f: workflow = _json.load(_f)`,
-            userCode,
+            "",
+            "def _node_code(pipeline, workflow):",
+            _indented,
+            "",
+            "_node_result = _node_code(pipeline, workflow)",
+            "if isinstance(_node_result, dict):",
+            "    pipeline.update(_node_result)",
+            "elif _node_result is not None:",
+            "    pipeline['output'] = _node_result",
             "",
             "try:",
             `    with open(${JSON.stringify(outputFile)}, 'w') as _f: _json.dump({'pipeline': pipeline, 'workflow': workflow}, _f)`,
