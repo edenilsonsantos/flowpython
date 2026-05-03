@@ -262,6 +262,52 @@ export const NODE_DEFINITIONS: NodeDef[] = [
     hasOutput: true,
   },
 
+  // ── File / Binary ─────────────────────────────────────────────
+  {
+    type: "file_to_base64",
+    label: "File → Base64",
+    description: "Lê arquivo do disco e codifica em base64",
+    category: "transform",
+    iconName: "FileUp",
+    color: "#fb923c",
+    defaultConfig: { filePath: "", outputVar: "file_b64" },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
+    type: "base64_to_file",
+    label: "Base64 → Arquivo",
+    description: "Decodifica base64 e salva em arquivo no disco",
+    category: "transform",
+    iconName: "FileDown",
+    color: "#fb923c",
+    defaultConfig: { inputVar: "file_b64", filePath: "/tmp/output", outputVar: "saved_path" },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
+    type: "binary_to_base64",
+    label: "Binário → Base64",
+    description: "Garante que um valor binário do pipeline esteja em base64",
+    category: "transform",
+    iconName: "Binary",
+    color: "#fb923c",
+    defaultConfig: { inputVar: "response", outputVar: "data_b64" },
+    hasInput: true,
+    hasOutput: true,
+  },
+  {
+    type: "binary_to_file",
+    label: "Binário → Arquivo",
+    description: "Salva dados binários (base64) do pipeline em arquivo",
+    category: "transform",
+    iconName: "FileDown",
+    color: "#fb923c",
+    defaultConfig: { inputVar: "response", filePath: "/tmp/output.bin", outputVar: "saved_path" },
+    hasInput: true,
+    hasOutput: true,
+  },
+
   // ── Data (legado) ──────────────────────────────────────────────
   {
     type: "set_variable",

@@ -258,6 +258,7 @@ function buildHttpRequestScript(
   const certPath = (config.certPath as string) ?? "";
   const timeout = Math.max(1, Number(config.timeout ?? 30));
   const followRedirects = (config.followRedirects as boolean) !== false;
+  const responseType = (config.responseType as string) ?? "auto";
 
   const paramsObj = Object.fromEntries(rawParams.filter((p) => p.enabled && p.key).map((p) => [p.key, p.value]));
   const headersObj = Object.fromEntries(rawHeaders.filter((h) => h.enabled && h.key).map((h) => [h.key, h.value]));
@@ -324,22 +325,37 @@ elif body_type == "raw":
 if auth:
     kwargs["auth"] = auth
 
+response_type = ${JSON.stringify(responseType)}
+
 try:
     response = requests.request(**kwargs)
     elapsed_ms = int(response.elapsed.total_seconds() * 1000)
     print(f"HTTP {response.status_code} {response.reason}")
     print(f"URL: {response.url}")
     print(f"Tempo: {elapsed_ms}ms")
-    print(f"Content-Type: {response.headers.get('content-type', 'desconhecido')}")
+    content_type = response.headers.get("content-type", "desconhecido")
+    print(f"Content-Type: {content_type}")
+    print(f"Tamanho: {len(response.content)} bytes")
     print()
-    try:
-        data = response.json()
-        print(json.dumps(data, ensure_ascii=False, indent=2))
-    except Exception:
+    if response_type == "binary":
+        import base64
+        b64 = base64.b64encode(response.content).decode("utf-8")
+        print(json.dumps({"__binary__": True, "base64": b64, "content_type": content_type, "size": len(response.content)}, ensure_ascii=False))
+    elif response_type == "text":
         text = response.text
         if len(text) > 5000:
             text = text[:5000] + "\\n...(truncado)"
-        print(text)
+        print(json.dumps({"text": text, "status_code": response.status_code}, ensure_ascii=False))
+    else:
+        # auto: try JSON, fallback to text
+        try:
+            data = response.json()
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+        except Exception:
+            text = response.text
+            if len(text) > 5000:
+                text = text[:5000] + "\\n...(truncado)"
+            print(text)
 except requests.exceptions.SSLError as e:
     print(f"Erro SSL: {e}", file=sys.stderr)
     sys.exit(1)
@@ -1705,6 +1721,151 @@ async function runWorkflow({
                 pipelineContext[outputVar] = JSON.parse(result.output.slice(jsonStart));
               }
             } catch { /* not JSON, that's fine */ }
+          }
+
+          if (output) await addLog(executionId, node.id, "info", output.trim());
+          if (error) await addLog(executionId, node.id, "error", error.trim());
+
+        } else if (node.type === "file_to_base64" || node.type === "base64_to_file" || node.type === "binary_to_base64" || node.type === "binary_to_file") {
+          // ── File / Binary conversion nodes ───────────────────────
+          const config = node.config as Record<string, unknown>;
+          let script = "";
+
+          if (node.type === "file_to_base64") {
+            const filePath = (config.filePath as string) ?? "";
+            const outVar = (config.outputVar as string) || "file_b64";
+            script = `import base64, json, os, sys
+file_path = ${JSON.stringify(filePath)}
+_pipeline = ${JSON.stringify(pipelineContext)}
+# Allow filePath to reference pipeline key
+if file_path in _pipeline:
+    file_path = str(_pipeline[file_path])
+try:
+    with open(file_path, "rb") as f:
+        raw = f.read()
+    b64 = base64.b64encode(raw).decode("utf-8")
+    size = len(raw)
+    mime = "application/octet-stream"
+    try:
+        import mimetypes
+        mime = mimetypes.guess_type(file_path)[0] or mime
+    except: pass
+    print(f"Lido: {file_path} ({size} bytes, {mime})")
+    print(json.dumps({"${outVar}": b64, "${outVar}_size": size, "${outVar}_content_type": mime}))
+except FileNotFoundError:
+    print(f"Arquivo não encontrado: {file_path}", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f"Erro: {e}", file=sys.stderr)
+    sys.exit(1)
+`;
+          } else if (node.type === "base64_to_file" || node.type === "binary_to_file") {
+            const inVar = (config.inputVar as string) || "response";
+            const outVar = (config.outputVar as string) || "saved_path";
+            const filePath = (config.filePath as string) ?? "/tmp/output";
+            script = `import base64, json, os, sys
+_pipeline = ${JSON.stringify(pipelineContext)}
+input_val = _pipeline.get(${JSON.stringify(inVar)})
+file_path = ${JSON.stringify(filePath)}
+try:
+    if isinstance(input_val, dict) and "__binary__" in input_val:
+        raw = base64.b64decode(input_val["base64"])
+    elif isinstance(input_val, str):
+        try:
+            raw = base64.b64decode(input_val)
+        except Exception:
+            raw = input_val.encode("utf-8")
+    elif isinstance(input_val, bytes):
+        raw = input_val
+    else:
+        print(f"Valor inválido para decodificação: {type(input_val)}", file=sys.stderr)
+        sys.exit(1)
+    os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+    with open(file_path, "wb") as f:
+        f.write(raw)
+    print(f"Salvo: {file_path} ({len(raw)} bytes)")
+    print(json.dumps({"${outVar}": file_path, "${outVar}_size": len(raw)}))
+except Exception as e:
+    print(f"Erro: {e}", file=sys.stderr)
+    sys.exit(1)
+`;
+          } else if (node.type === "binary_to_base64") {
+            const inVar = (config.inputVar as string) || "response";
+            const outVar = (config.outputVar as string) || "data_b64";
+            script = `import base64, json, sys
+_pipeline = ${JSON.stringify(pipelineContext)}
+input_val = _pipeline.get(${JSON.stringify(inVar)})
+try:
+    if isinstance(input_val, dict) and "__binary__" in input_val:
+        b64 = input_val["base64"]
+        ct = input_val.get("content_type", "application/octet-stream")
+        sz = input_val.get("size", 0)
+    elif isinstance(input_val, bytes):
+        b64 = base64.b64encode(input_val).decode("utf-8")
+        ct = "application/octet-stream"
+        sz = len(input_val)
+    elif isinstance(input_val, str):
+        try:
+            base64.b64decode(input_val, validate=True)
+            b64 = input_val
+        except Exception:
+            b64 = base64.b64encode(input_val.encode("utf-8")).decode("utf-8")
+        ct = "text/plain"
+        sz = len(b64)
+    else:
+        print(f"Tipo não suportado: {type(input_val)}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Convertido para base64: {sz} bytes, {ct}")
+    print(json.dumps({"${outVar}": b64, "${outVar}_content_type": ct, "${outVar}_size": sz}))
+except Exception as e:
+    print(f"Erro: {e}", file=sys.stderr)
+    sys.exit(1)
+`;
+          }
+
+          const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "npython-file-"));
+          const scriptPath = path.join(tmpDir, "script.py");
+          await fs.writeFile(scriptPath, script, "utf8");
+
+          const venvPython = path.join(venovsDir, workflowId, "bin", "python3");
+          let pythonBin = "python3";
+          try { await fs.access(venvPython); pythonBin = venvPython; } catch {}
+
+          const result = await new Promise<{ success: boolean; output: string; error: string | null }>(
+            (resolve) => {
+              const proc = spawn(pythonBin, [scriptPath], { timeout: 30000 });
+              runningProcesses.set(executionId, proc);
+              let stdout = "";
+              let stderr = "";
+              proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+              proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+              proc.on("close", (code) => {
+                runningProcesses.delete(executionId);
+                if (code === 0) resolve({ success: true, output: stdout, error: null });
+                else resolve({ success: false, output: stdout, error: stderr || `Exit code ${code}` });
+              });
+              proc.on("error", (err) => {
+                runningProcesses.delete(executionId);
+                resolve({ success: false, output: "", error: err.message });
+              });
+            }
+          );
+
+          await fs.rm(tmpDir, { recursive: true, force: true });
+
+          success = result.success;
+          output = result.output;
+          error = result.error;
+
+          if (result.success) {
+            try {
+              const lines = result.output.split("\n");
+              const jsonLine = lines.find((l) => l.trim().startsWith("{") || l.trim().startsWith("["));
+              if (jsonLine) {
+                const parsed = JSON.parse(result.output.slice(result.output.indexOf(jsonLine)));
+                Object.assign(pipelineContext, parsed);
+              }
+            } catch { /* not JSON */ }
           }
 
           if (output) await addLog(executionId, node.id, "info", output.trim());

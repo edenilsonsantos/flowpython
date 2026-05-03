@@ -5,6 +5,7 @@ import {
   Variable, Database, Shuffle, Globe, Timer, StickyNote, Pin, Braces, Syringe, Package,
   ToggleRight, GitMerge, ListFilter, Layers, Sigma, Scissors,
   ArrowUpDown, FilterX, Hash, MoveRight, Link2, Share2,
+  FileUp, FileDown, Binary,
   LucideProps,
 } from "lucide-react";
 import { getNodeDef, NODE_CATEGORY_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
@@ -15,6 +16,7 @@ const ICON_MAP: Record<string, React.FC<LucideProps>> = {
   Variable, Database, Shuffle, Globe, Timer, StickyNote, Braces, Syringe, Package,
   ToggleRight, GitMerge, ListFilter, Layers, Sigma, Scissors,
   ArrowUpDown, FilterX, Hash, Share2,
+  FileUp, FileDown, Binary,
 };
 
 export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps) => {

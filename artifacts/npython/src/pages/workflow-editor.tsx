@@ -1593,6 +1593,10 @@ function NodeConfigPanel({
         <CallSubflowConfig cfg={cfg} onUpdateConfig={onUpdateConfig} currentWorkflowId={workflowId} />
       )}
 
+      {(type === "file_to_base64" || type === "base64_to_file" || type === "binary_to_base64" || type === "binary_to_file") && (
+        <FileBinaryConfig type={type} cfg={cfg} onUpdateConfig={onUpdateConfig} />
+      )}
+
       {type === "set_variable" && <>
         <Field label="Chave"><Input value={(cfg.key as string) ?? ""} onChange={(e) => onUpdateConfig("key", e.target.value)} placeholder="MY_VAR" /></Field>
         <Field label="Valor"><VarTokenInput value={(cfg.value as string) ?? ""} onChange={(v) => onUpdateConfig("value", v)} placeholder='valor ou pipeline["var"]' /></Field>
@@ -2644,6 +2648,100 @@ function DatabaseNodeConfig({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+function FileBinaryConfig({
+  type,
+  cfg,
+  onUpdateConfig,
+}: {
+  type: string;
+  cfg: Record<string, unknown>;
+  onUpdateConfig: (k: string, v: unknown) => void;
+}) {
+  const needsInput  = type !== "file_to_base64";
+  const needsFile   = type !== "binary_to_base64";
+  const isToFile    = type === "base64_to_file" || type === "binary_to_file";
+  const isToBase64  = type === "file_to_base64"  || type === "binary_to_base64";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {needsInput && (
+        <Field label="Variável de entrada (pipeline)">
+          <Input
+            value={(cfg.inputVar as string) ?? ""}
+            onChange={(e) => onUpdateConfig("inputVar", e.target.value)}
+            placeholder="response"
+            style={{ fontFamily: "monospace", fontSize: 12 }}
+          />
+          <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 3, lineHeight: 1.5 }}>
+            {type === "binary_to_base64"
+              ? "Chave do pipeline com valor binário (bytes, base64 string, ou objeto __binary__)"
+              : "Chave do pipeline com base64 string ou objeto {base64, content_type, size}"}
+          </div>
+        </Field>
+      )}
+
+      {needsFile && (
+        <Field label={isToFile ? "Caminho do arquivo de saída" : "Caminho do arquivo"}>
+          <Input
+            value={(cfg.filePath as string) ?? ""}
+            onChange={(e) => onUpdateConfig("filePath", e.target.value)}
+            placeholder={isToFile ? "/tmp/resultado.bin" : "/caminho/para/arquivo.pdf"}
+            style={{ fontFamily: "monospace", fontSize: 12 }}
+          />
+          {type === "file_to_base64" && (
+            <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 3 }}>
+              Pode ser um caminho literal ou uma chave do pipeline que contém o caminho
+            </div>
+          )}
+        </Field>
+      )}
+
+      <Field label="Variável de saída (pipeline)">
+        <Input
+          value={(cfg.outputVar as string) ?? ""}
+          onChange={(e) => onUpdateConfig("outputVar", e.target.value)}
+          placeholder={isToFile ? "saved_path" : isToBase64 ? "file_b64" : "data_b64"}
+          style={{ fontFamily: "monospace", fontSize: 12 }}
+        />
+        <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 3, lineHeight: 1.5 }}>
+          {isToFile
+            ? "Caminho do arquivo salvo fica nesta chave do pipeline"
+            : "String base64 fica nesta chave — use com nodo Binário→Arquivo para persistir"}
+        </div>
+      </Field>
+
+      {/* Visual hint box */}
+      <div style={{
+        background: "rgba(251,146,60,0.07)", border: "1px solid rgba(251,146,60,0.2)",
+        borderRadius: 8, padding: "8px 10px", fontSize: 10, color: "hsl(var(--muted-foreground))", lineHeight: 1.7,
+      }}>
+        {type === "file_to_base64" && <>
+          <strong style={{ color: "#fb923c" }}>file_to_base64:</strong><br />
+          Lê <code style={{ color: "#60a5fa" }}>filePath</code> → base64 string em <code style={{ color: "#34d399" }}>outputVar</code><br />
+          Também salva <code style={{ color: "#34d399" }}>outputVar_size</code> e <code style={{ color: "#34d399" }}>outputVar_content_type</code>
+        </>}
+        {type === "base64_to_file" && <>
+          <strong style={{ color: "#fb923c" }}>base64_to_file:</strong><br />
+          Decodifica <code style={{ color: "#60a5fa" }}>pipeline[inputVar]</code> → salva em <code style={{ color: "#60a5fa" }}>filePath</code><br />
+          Aceita string base64 direta ou objeto <code style={{ color: "#a78bfa" }}>&#123;base64, content_type&#125;</code>
+        </>}
+        {type === "binary_to_base64" && <>
+          <strong style={{ color: "#fb923c" }}>binary_to_base64:</strong><br />
+          Converte <code style={{ color: "#60a5fa" }}>pipeline[inputVar]</code> para base64 string limpa<br />
+          Útil após HTTP com responseType=binário
+        </>}
+        {type === "binary_to_file" && <>
+          <strong style={{ color: "#fb923c" }}>binary_to_file:</strong><br />
+          Salva <code style={{ color: "#60a5fa" }}>pipeline[inputVar]</code> (bytes/base64) diretamente em <code style={{ color: "#60a5fa" }}>filePath</code><br />
+          Equivalente ao base64_to_file com suporte a bytes Python
+        </>}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function CallSubflowConfig({
   cfg,
   onUpdateConfig,
@@ -3162,6 +3260,54 @@ function HttpRequestConfig({
               </div>
             )}
 
+            {/* Response Type */}
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 6 }}>
+                Tipo de resposta
+              </label>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {([
+                  { value: "auto",   label: "Auto (JSON → texto)",  desc: "Tenta JSON, usa texto como fallback" },
+                  { value: "binary", label: "Binário (arquivo, imagem…)", desc: "Baixa como bytes → armazena em base64 no pipeline" },
+                  { value: "text",   label: "Texto forçado",         desc: "Sempre usa response.text (sem parse JSON)" },
+                ] as { value: string; label: string; desc: string }[]).map((rt) => {
+                  const isActive = ((cfg.responseType as string) ?? "auto") === rt.value;
+                  return (
+                    <button
+                      key={rt.value}
+                      onClick={() => onUpdateConfig("responseType", rt.value)}
+                      style={{
+                        display: "flex", alignItems: "flex-start", gap: 8,
+                        padding: "7px 10px", borderRadius: 7, cursor: "pointer", textAlign: "left",
+                        border: `1.5px solid ${isActive ? "#60a5fa" : "hsl(var(--border))"}`,
+                        background: isActive ? "rgba(96,165,250,0.08)" : "transparent",
+                      }}
+                    >
+                      <div style={{
+                        width: 8, height: 8, borderRadius: "50%", flexShrink: 0, marginTop: 3,
+                        background: isActive ? "#60a5fa" : "hsl(var(--muted-foreground))",
+                      }} />
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: isActive ? 600 : 400, color: isActive ? "#60a5fa" : "hsl(var(--foreground))" }}>
+                          {rt.label}
+                        </div>
+                        <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 1 }}>
+                          {rt.desc}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              {((cfg.responseType as string) ?? "auto") === "binary" && (
+                <div style={{ marginTop: 6, fontSize: 10, color: "#60a5fa", background: "rgba(96,165,250,0.07)", padding: "6px 8px", borderRadius: 6, lineHeight: 1.5 }}>
+                  A resposta binária fica em <code style={{ color: "#34d399" }}>pipeline[outputVar]</code> como objeto{" "}
+                  <code style={{ color: "#a78bfa" }}>&#123;base64, content_type, size&#125;</code>.<br />
+                  Use o nodo <strong>Binário → Arquivo</strong> para salvar no disco.
+                </div>
+              )}
+            </div>
+
             <div>
               <label style={{ fontSize: 11, fontWeight: 500, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: 4 }}>Variável de saída</label>
               <Input
@@ -3171,7 +3317,9 @@ function HttpRequestConfig({
                 style={{ fontFamily: "monospace", fontSize: 12 }}
               />
               <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 4 }}>
-                Resposta JSON salva no contexto como esta variável
+                {((cfg.responseType as string) ?? "auto") === "binary"
+                  ? "Objeto binário {base64, content_type, size} salvo com esta chave"
+                  : "Resposta JSON salva no contexto como esta variável"}
               </div>
             </div>
           </div>
