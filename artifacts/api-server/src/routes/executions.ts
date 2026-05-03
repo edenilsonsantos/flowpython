@@ -1088,9 +1088,10 @@ async function runWorkflow({
         workflow: workflowContext,
       }));
 
+      const nodeConfig = node.config as Record<string, unknown>;
+
       try {
         // ── Pinned: return mock output without executing ────────────
-        const nodeConfig = node.config as Record<string, unknown>;
         if (nodeConfig.pinned === true) {
           output = String(nodeConfig.mockOutput ?? "(pinned — sem output definido)");
           success = true;
