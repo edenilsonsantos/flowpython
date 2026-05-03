@@ -8,6 +8,7 @@ import credentialsRouter from "./credentials";
 import packagesRouter from "./packages";
 import databaseRouter from "./database";
 import aiRouter from "./ai";
+import pythonEnvRouter from "./python-env";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(credentialsRouter);
 router.use(packagesRouter);
 router.use(databaseRouter);
 router.use(aiRouter);
+router.use(pythonEnvRouter);
 
 export default router;

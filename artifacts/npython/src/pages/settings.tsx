@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import {
   Bot, Key, CheckCircle2, XCircle, Loader2, Eye, EyeOff, Save, RefreshCw,
+  Terminal, Package, ArrowUpCircle, AlertTriangle,
 } from "lucide-react";
 
 interface AiProviderState {
@@ -180,6 +181,200 @@ function ProviderCard({
   );
 }
 
+interface PythonEnvInfo {
+  python: { version: string; systemManaged: boolean };
+  pip: { version: string; latestVersion: string | null; upgradeAvailable: boolean };
+  venvCount: number;
+}
+
+function VersionBadge({ current, latest, upgradeAvailable }: { current: string; latest: string | null; upgradeAvailable: boolean }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <code style={{
+        background: "hsl(var(--muted))", border: "1px solid hsl(var(--border))",
+        borderRadius: 6, padding: "3px 10px", fontSize: 13, fontFamily: "monospace", fontWeight: 600,
+        color: "hsl(var(--foreground))",
+      }}>{current}</code>
+      {latest && (
+        <span style={{ fontSize: 11, color: "hsl(var(--muted-foreground))" }}>
+          última: <code style={{ fontFamily: "monospace" }}>{latest}</code>
+        </span>
+      )}
+      {upgradeAvailable && (
+        <Badge style={{ background: "rgba(234,179,8,0.15)", color: "#ca8a04", border: "1px solid rgba(234,179,8,0.3)", fontSize: 10, gap: 4 }}>
+          <AlertTriangle size={10} /> Atualização disponível
+        </Badge>
+      )}
+      {!upgradeAvailable && latest && (
+        <Badge style={{ background: "rgba(20,184,166,0.1)", color: "#14b8a6", border: "1px solid rgba(20,184,166,0.25)", fontSize: 10, gap: 4 }}>
+          <CheckCircle2 size={10} /> Atualizado
+        </Badge>
+      )}
+    </div>
+  );
+}
+
+function PythonEnvCard() {
+  const { toast } = useToast();
+  const [info, setInfo] = useState<PythonEnvInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [upgrading, setUpgrading] = useState(false);
+
+  const fetchInfo = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/settings/python-env");
+      if (res.ok) setInfo(await res.json());
+    } catch {}
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetchInfo(); }, [fetchInfo]);
+
+  const handleUpgradePip = async () => {
+    setUpgrading(true);
+    try {
+      const res = await fetch("/api/settings/pip-upgrade", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        toast({
+          title: "pip atualizado",
+          description: data.venvCount === 0
+            ? "Nenhum ambiente virtual encontrado para atualizar."
+            : `pip atualizado em ${data.upgraded} ambiente(s)${data.failed > 0 ? `, ${data.failed} com erro` : ""}.`,
+        });
+        await fetchInfo();
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (e: any) {
+      toast({ title: "Erro ao atualizar pip", description: e.message, variant: "destructive" });
+    } finally {
+      setUpgrading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader style={{ paddingBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 8, background: "rgba(59,130,246,0.1)",
+              border: "1px solid rgba(59,130,246,0.25)", display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <Terminal size={18} style={{ color: "#3b82f6" }} />
+            </div>
+            <div>
+              <CardTitle style={{ fontSize: 15 }}>Ambiente de Execução Python</CardTitle>
+              <CardDescription style={{ fontSize: 12, marginTop: 2 }}>
+                Versões do interpretador e gerenciador de pacotes
+              </CardDescription>
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" onClick={fetchInfo} disabled={loading}>
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+          </Button>
+        </div>
+      </CardHeader>
+
+      <CardContent>
+        {loading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 32 }}>
+            <Loader2 size={22} className="animate-spin" style={{ color: "hsl(var(--muted-foreground))" }} />
+          </div>
+        ) : info ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+            {/* Python */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "14px 16px", borderRadius: 8,
+              background: "hsl(var(--muted)/40%)", border: "1px solid hsl(var(--border))",
+              flexWrap: "wrap", gap: 12,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{
+                  width: 32, height: 32, borderRadius: 6, background: "rgba(59,130,246,0.12)",
+                  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                }}>
+                  <Terminal size={15} style={{ color: "#3b82f6" }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Python</div>
+                  <VersionBadge current={info.python.version} latest={null} upgradeAvailable={false} />
+                </div>
+              </div>
+              <Badge style={{
+                background: "rgba(99,102,241,0.1)", color: "#818cf8",
+                border: "1px solid rgba(99,102,241,0.25)", fontSize: 10,
+              }}>
+                Gerenciado pelo sistema
+              </Badge>
+            </div>
+
+            {/* pip */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "14px 16px", borderRadius: 8,
+              background: "hsl(var(--muted)/40%)", border: "1px solid hsl(var(--border))",
+              flexWrap: "wrap", gap: 12,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{
+                  width: 32, height: 32, borderRadius: 6, background: "rgba(20,184,166,0.12)",
+                  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                }}>
+                  <Package size={15} style={{ color: "#14b8a6" }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>pip</div>
+                  <VersionBadge
+                    current={info.pip.version}
+                    latest={info.pip.latestVersion}
+                    upgradeAvailable={info.pip.upgradeAvailable}
+                  />
+                </div>
+              </div>
+              {info.pip.upgradeAvailable && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleUpgradePip}
+                  disabled={upgrading}
+                  style={{ gap: 6, borderColor: "rgba(234,179,8,0.4)", color: "#ca8a04", flexShrink: 0 }}
+                >
+                  {upgrading
+                    ? <><Loader2 size={13} className="animate-spin" /> Atualizando...</>
+                    : <><ArrowUpCircle size={13} /> Atualizar para {info.pip.latestVersion}</>}
+                </Button>
+              )}
+            </div>
+
+            {/* venv info */}
+            <div style={{
+              fontSize: 12, color: "hsl(var(--muted-foreground))",
+              background: "hsl(var(--muted)/30%)", borderRadius: 7,
+              padding: "10px 14px", display: "flex", alignItems: "center", gap: 8,
+            }}>
+              <Package size={13} style={{ flexShrink: 0 }} />
+              <span>
+                {info.venvCount === 0
+                  ? "Nenhum ambiente virtual criado ainda. Eles são criados automaticamente ao instalar pacotes nos workflows."
+                  : `${info.venvCount} ambiente${info.venvCount > 1 ? "s virtuais" : " virtual"} ativo${info.venvCount > 1 ? "s" : ""} — cada workflow tem seu próprio ambiente Python isolado.`}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: "hsl(var(--muted-foreground))", textAlign: "center", padding: 24 }}>
+            Não foi possível carregar informações do ambiente.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Settings() {
   const [providers, setProviders] = useState<AiProviderState[]>([]);
   const [loading, setLoading] = useState(true);
@@ -235,22 +430,19 @@ export default function Settings() {
         )}
       </div>
 
-      {/* Existing Environment Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Ambiente de Execução</CardTitle>
-          <CardDescription>
-            Configurações do ambiente Python dos workflows.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="bg-secondary/50 p-4 rounded-md text-sm text-muted-foreground">
-            Cada workflow possui seu próprio ambiente virtual Python (venv) isolado. 
-            As bibliotecas são instaladas por workflow via nodos pip ou pelo painel de dependências.
-          </div>
-          <Button disabled>Restart Worker Engine</Button>
-        </CardContent>
-      </Card>
+      {/* Python Environment */}
+      <div>
+        <div style={{ marginBottom: 16 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+            <Terminal size={20} style={{ color: "#3b82f6" }} />
+            Ambiente Python
+          </h2>
+          <p style={{ fontSize: 13, color: "hsl(var(--muted-foreground))", marginTop: 4 }}>
+            Versões instaladas e gerenciamento do ambiente de execução.
+          </p>
+        </div>
+        <PythonEnvCard />
+      </div>
     </div>
   );
 }
