@@ -4,7 +4,7 @@ import {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
   Variable, Database, Shuffle, Globe, Timer, StickyNote, Pin, Braces, Syringe, Package,
   ToggleRight, GitMerge, ListFilter, Layers, Sigma, Scissors,
-  ArrowUpDown, FilterX, Hash, MoveRight, Link2,
+  ArrowUpDown, FilterX, Hash, MoveRight, Link2, Share2,
   LucideProps,
 } from "lucide-react";
 import { getNodeDef, NODE_CATEGORY_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
@@ -14,7 +14,7 @@ const ICON_MAP: Record<string, React.FC<LucideProps>> = {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
   Variable, Database, Shuffle, Globe, Timer, StickyNote, Braces, Syringe, Package,
   ToggleRight, GitMerge, ListFilter, Layers, Sigma, Scissors,
-  ArrowUpDown, FilterX, Hash,
+  ArrowUpDown, FilterX, Hash, Share2,
 };
 
 export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps) => {

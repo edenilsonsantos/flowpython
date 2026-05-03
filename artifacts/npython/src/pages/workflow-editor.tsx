@@ -39,7 +39,7 @@ import {
   FlaskConical, Pin, PinOff, CheckCircle2, XCircle, Loader2, Plus, Package,
   Eye, EyeOff, Lock, ShieldOff, Shield, Database,
   ChevronDown, ChevronRight, Network, Copy, Zap, Download, PackageCheck,
-  Bot, Wand2, Sparkles,
+  Bot, Wand2, Sparkles, MoveRight, Share2,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -57,6 +57,7 @@ import { copilotExtension } from "@/lib/copilot-extension";
 import { QuickConnectCtx } from "@/components/quick-connect-popup";
 import {
   useListVariables,
+  useListWorkflows,
 } from "@workspace/api-client-react";
 
 const nodeTypes = { custom: CanvasNode };
@@ -1588,6 +1589,10 @@ function NodeConfigPanel({
         </Field>
       )}
 
+      {type === "call_subflow" && (
+        <CallSubflowConfig cfg={cfg} onUpdateConfig={onUpdateConfig} currentWorkflowId={workflowId} />
+      )}
+
       {type === "set_variable" && <>
         <Field label="Chave"><Input value={(cfg.key as string) ?? ""} onChange={(e) => onUpdateConfig("key", e.target.value)} placeholder="MY_VAR" /></Field>
         <Field label="Valor"><VarTokenInput value={(cfg.value as string) ?? ""} onChange={(v) => onUpdateConfig("value", v)} placeholder='valor ou pipeline["var"]' /></Field>
@@ -1643,6 +1648,47 @@ function NodeConfigPanel({
 
       {isDatabaseNodeType(type) && (
         <DatabaseNodeConfig nodeType={type} cfg={cfg} onUpdateConfig={onUpdateConfig} />
+      )}
+
+      {/* ── Universal Output Variable ─────────────────────────────── */}
+      {!isNote && !isTrigger && type !== "call_subflow" && (
+        <div style={{ borderTop: "1px solid hsl(var(--border))", paddingTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+            <div style={{
+              width: 22, height: 22, borderRadius: 6,
+              background: (cfg.nodeOutputVar as string)?.trim() ? "rgba(52,211,153,0.15)" : "rgba(255,255,255,0.04)",
+              border: `1px solid ${(cfg.nodeOutputVar as string)?.trim() ? "rgba(52,211,153,0.35)" : "hsl(var(--border))"}`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <MoveRight size={11} color={(cfg.nodeOutputVar as string)?.trim() ? "#34d399" : "hsl(var(--muted-foreground))"} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "hsl(var(--foreground))" }}>Variável de saída</div>
+              <div style={{ fontSize: 9, color: "hsl(var(--muted-foreground))" }}>Salva o resultado deste nodo no pipeline</div>
+            </div>
+          </div>
+          <Input
+            value={(cfg.nodeOutputVar as string) ?? ""}
+            onChange={(e) => onUpdateConfig("nodeOutputVar", e.target.value)}
+            placeholder="Ex: meu_resultado  (opcional)"
+            style={{ fontSize: 12, fontFamily: "monospace" }}
+          />
+          {(cfg.nodeOutputVar as string)?.trim() && (
+            <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 5, lineHeight: 1.5 }}>
+              Após execução: <code style={{ color: "#34d399", background: "rgba(52,211,153,0.1)", padding: "1px 5px", borderRadius: 3 }}>
+                pipeline["{(cfg.nodeOutputVar as string).trim()}"]
+              </code> conterá o resultado deste nodo.
+              {type === "code" && (
+                <span style={{ display: "block", marginTop: 3 }}>
+                  No código, use{" "}
+                  <code style={{ color: "#a78bfa", background: "rgba(167,139,250,0.1)", padding: "1px 5px", borderRadius: 3 }}>
+                    return &#123;"{(cfg.nodeOutputVar as string).trim()}": resultado&#125;
+                  </code>{" "}para definir explicitamente.
+                </span>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {/* ── Pin / Mock Data section ──────────────────────────────── */}
@@ -2592,6 +2638,129 @@ function DatabaseNodeConfig({
           Necessário: <strong>{dbMeta.installPkg}</strong>. Use o nodo <strong>Pip Packages</strong> (ação Install) antes deste nodo se não instalado.
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function CallSubflowConfig({
+  cfg,
+  onUpdateConfig,
+  currentWorkflowId,
+}: {
+  cfg: Record<string, unknown>;
+  onUpdateConfig: (k: string, v: unknown) => void;
+  currentWorkflowId: string;
+}) {
+  const { data: allWorkflows } = useListWorkflows();
+  type InputParam = { key: string; value: string };
+  const inputParams = ((cfg.inputParams as InputParam[]) ?? []);
+  const outputVar = (cfg.outputVar as string) ?? "";
+  const selectedId = (cfg.workflowId as string) ?? "";
+
+  const workflows = (allWorkflows ?? []).filter((w: any) => w.id !== currentWorkflowId);
+
+  const addParam = () => onUpdateConfig("inputParams", [...inputParams, { key: "", value: "" }]);
+  const updateParam = (i: number, field: "key" | "value", val: string) => {
+    const next = inputParams.map((p, idx) => idx === i ? { ...p, [field]: val } : p);
+    onUpdateConfig("inputParams", next);
+  };
+  const removeParam = (i: number) => onUpdateConfig("inputParams", inputParams.filter((_, idx) => idx !== i));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Workflow selector */}
+      <Field label="Sub-workflow a chamar">
+        <Select value={selectedId} onValueChange={(v) => onUpdateConfig("workflowId", v)}>
+          <SelectTrigger>
+            <SelectValue placeholder="Selecione um workflow..." />
+          </SelectTrigger>
+          <SelectContent>
+            {workflows.length === 0 ? (
+              <SelectItem value="__none" disabled>Nenhum outro workflow encontrado</SelectItem>
+            ) : (
+              workflows.map((w: any) => (
+                <SelectItem key={w.id} value={w.id}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Share2 size={11} style={{ opacity: 0.6 }} />
+                    {w.name}
+                  </div>
+                </SelectItem>
+              ))
+            )}
+          </SelectContent>
+        </Select>
+        {selectedId && (
+          <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 3 }}>
+            O sub-workflow deve ter um nodo <strong>Sub-flow Trigger</strong> como ponto de entrada.
+          </div>
+        )}
+      </Field>
+
+      {/* Input params */}
+      <Field label="Parâmetros de entrada (opcional)">
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {inputParams.map((param, i) => (
+            <div key={i} style={{ display: "flex", gap: 5, alignItems: "center" }}>
+              <Input
+                value={param.key}
+                onChange={(e) => updateParam(i, "key", e.target.value)}
+                placeholder="chave"
+                style={{ flex: 1, fontSize: 12, fontFamily: "monospace" }}
+              />
+              <span style={{ fontSize: 11, color: "hsl(var(--muted-foreground))" }}>:</span>
+              <Input
+                value={param.value}
+                onChange={(e) => updateParam(i, "value", e.target.value)}
+                placeholder='valor ou pipeline["key"]'
+                style={{ flex: 2, fontSize: 12, fontFamily: "monospace" }}
+              />
+              <button
+                onClick={() => removeParam(i)}
+                style={{
+                  background: "none", border: "none", cursor: "pointer", padding: 4,
+                  color: "hsl(var(--muted-foreground))", flexShrink: 0,
+                }}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+          <Button variant="outline" size="sm" onClick={addParam} style={{ alignSelf: "flex-start" }}>
+            <Plus size={12} style={{ marginRight: 4 }} /> Adicionar parâmetro
+          </Button>
+          {inputParams.length > 0 && (
+            <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", lineHeight: 1.5 }}>
+              Os parâmetros ficam disponíveis em <code style={{ color: "#a78bfa", background: "rgba(167,139,250,0.1)", padding: "1px 4px", borderRadius: 3 }}>pipeline</code> dentro do sub-workflow.
+              O valor pode ser um literal JSON <code style={{ color: "#f59e0b" }}>42</code>, <code style={{ color: "#f59e0b" }}>"texto"</code> ou uma chave do pipeline atual.
+            </div>
+          )}
+        </div>
+      </Field>
+
+      {/* Output variable */}
+      <Field label="Variável de saída (opcional)">
+        <Input
+          value={outputVar}
+          onChange={(e) => onUpdateConfig("outputVar", e.target.value)}
+          placeholder="Ex: resultado_subflow"
+          style={{ fontSize: 12, fontFamily: "monospace" }}
+        />
+        {outputVar.trim() ? (
+          <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 4, lineHeight: 1.5 }}>
+            O pipeline final do sub-workflow será salvo em{" "}
+            <code style={{ color: "#34d399", background: "rgba(52,211,153,0.1)", padding: "1px 4px", borderRadius: 3 }}>
+              pipeline["{outputVar.trim()}"]
+            </code>
+            . Deixe em branco para mesclar diretamente no pipeline atual.
+          </div>
+        ) : (
+          <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 4 }}>
+            Sem variável: o pipeline do sub-workflow é mesclado no pipeline do workflow pai.
+          </div>
+        )}
+      </Field>
     </div>
   );
 }

@@ -135,6 +135,21 @@ export const NODE_DEFINITIONS: NodeDef[] = [
     hasInput: true,
     hasOutput: true,
   },
+  {
+    type: "call_subflow",
+    label: "Call Sub-flow",
+    description: "Chama outro workflow como sub-rotina",
+    category: "logic",
+    iconName: "Share2",
+    color: "#c084fc",
+    defaultConfig: {
+      workflowId: "",
+      inputParams: [],
+      outputVar: "",
+    },
+    hasInput: true,
+    hasOutput: true,
+  },
 
   // ── Variables ─────────────────────────────────────────────────
   {

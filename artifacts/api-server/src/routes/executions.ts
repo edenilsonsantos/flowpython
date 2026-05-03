@@ -760,6 +760,184 @@ async function addLog(executionId: string, nodeId: string | null, level: string,
   } catch {}
 }
 
+// ─── Sub-workflow inline executor ─────────────────────────────────────────────
+
+async function runSubWorkflowInline({
+  workflowId,
+  nodes,
+  edges,
+  initialPipeline,
+  initialWorkflow,
+  parentExecutionId,
+  parentNodeLabel,
+  venovsDir,
+  depth = 0,
+}: {
+  workflowId: string;
+  nodes: any[];
+  edges: any[];
+  initialPipeline: Record<string, unknown>;
+  initialWorkflow: Record<string, unknown>;
+  parentExecutionId: string;
+  parentNodeLabel: string;
+  venovsDir: string;
+  depth?: number;
+}): Promise<{ success: boolean; finalPipeline: Record<string, unknown>; error?: string }> {
+  if (depth > 10) {
+    return { success: false, finalPipeline: { ...initialPipeline }, error: "Profundidade máxima de sub-flow (10) atingida" };
+  }
+
+  const pipelineCtx: Record<string, unknown> = { ...initialPipeline };
+  const workflowCtx: Record<string, unknown> = { ...initialWorkflow };
+
+  // Entry points: trigger_subflow nodes, or nodes with no incoming edges
+  const triggerNodes = nodes.filter((n) => n.type === "trigger_subflow");
+  const startNodes = triggerNodes.length > 0
+    ? triggerNodes
+    : nodes.filter((n) => !edges.some((e: any) => e.targetNodeId === n.id));
+
+  if (startNodes.length === 0) {
+    return { success: false, finalPipeline: pipelineCtx, error: "Nenhum ponto de entrada encontrado no sub-flow" };
+  }
+
+  // BFS
+  const childrenMap = new Map<string, string[]>();
+  for (const node of nodes) childrenMap.set(node.id, []);
+  for (const edge of edges) {
+    const arr = childrenMap.get(edge.sourceNodeId) ?? [];
+    arr.push(edge.targetNodeId);
+    childrenMap.set(edge.sourceNodeId, arr);
+  }
+  const reachable = new Set<string>(startNodes.map((n: any) => n.id));
+  const bfsQ = [...startNodes.map((n: any) => n.id)];
+  let bi = 0;
+  while (bi < bfsQ.length) {
+    const cur = bfsQ[bi++];
+    for (const ch of childrenMap.get(cur) ?? []) {
+      if (!reachable.has(ch)) { reachable.add(ch); bfsQ.push(ch); }
+    }
+  }
+  const reachableNodes = nodes.filter((n: any) => reachable.has(n.id));
+
+  // Topological sort (DFS)
+  const inMap = new Map<string, string[]>();
+  for (const node of reachableNodes) inMap.set(node.id, []);
+  for (const edge of edges) {
+    if (reachable.has(edge.sourceNodeId) && reachable.has(edge.targetNodeId)) {
+      const arr = inMap.get(edge.targetNodeId) ?? [];
+      arr.push(edge.sourceNodeId);
+      inMap.set(edge.targetNodeId, arr);
+    }
+  }
+  const sorted: any[] = [];
+  const vis = new Set<string>();
+  function visitSub(nid: string) {
+    if (vis.has(nid)) return; vis.add(nid);
+    for (const dep of inMap.get(nid) ?? []) visitSub(dep);
+    const node = reachableNodes.find((n: any) => n.id === nid);
+    if (node) sorted.push(node);
+  }
+  for (const node of reachableNodes) visitSub(node.id);
+
+  await addLog(parentExecutionId, null, "info",
+    `[sub-flow] "${parentNodeLabel}" → ${sorted.length} nodo(s) em "${workflowId}"`);
+
+  for (const node of sorted) {
+    // Trigger nodes are entry points — skip actual execution
+    if (String(node.type).startsWith("trigger_")) continue;
+
+    const cfg = node.config as Record<string, unknown>;
+    let ok = false;
+    let out = "";
+    let err: string | null = null;
+
+    try {
+      const venvPy = path.join(venovsDir, workflowId, "bin", "python3");
+      let pyBin = "python3";
+      try { await fs.access(venvPy); pyBin = venvPy; } catch {}
+
+      if (cfg.pinned === true) {
+        out = String(cfg.mockOutput ?? "(pinned)"); ok = true;
+
+      } else if (node.type === "code") {
+        const userCode = (cfg.code as string) ?? "";
+        const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "npy-sub-"));
+        const pf = path.join(tmp, "p.json"), wf = path.join(tmp, "w.json"), of2 = path.join(tmp, "o.json"), sf = path.join(tmp, "s.py");
+        await fs.writeFile(pf, JSON.stringify(pipelineCtx), "utf8");
+        await fs.writeFile(wf, JSON.stringify(workflowCtx), "utf8");
+        const ind = userCode.trim() === "" ? "    pass" : userCode.split("\n").map((l) => "    " + l).join("\n");
+        await fs.writeFile(sf, [
+          "import json as _j",
+          `with open(${JSON.stringify(pf)}) as _f: pipeline = _j.load(_f)`,
+          `with open(${JSON.stringify(wf)}) as _f: workflow = _j.load(_f)`,
+          "def _run(pipeline, workflow):", ind, "",
+          "_r = _run(pipeline, workflow)",
+          "if isinstance(_r, dict): pipeline.update(_r)",
+          "elif _r is not None: pipeline['output'] = _r",
+          "def _s(v):",
+          "    if isinstance(v, dict): return {str(k): _s(u) for k,u in v.items()}",
+          "    if isinstance(v, (set,frozenset)): return sorted([_s(i) for i in v],key=str)",
+          "    if isinstance(v, (list,tuple)): return [_s(i) for i in v]",
+          "    try: _j.dumps(v); return v",
+          "    except: return repr(v)",
+          `with open(${JSON.stringify(of2)},'w') as _f: _j.dump({'pipeline':_s(pipeline),'workflow':_s(workflow)},_f)`,
+        ].join("\n"), "utf8");
+        const r = await new Promise<{ ok: boolean; out: string; err: string | null }>((res) => {
+          const p = spawn(pyBin, [sf], { timeout: 60000 });
+          let so = "", se = "";
+          p.stdout.on("data", (d: Buffer) => { so += d; });
+          p.stderr.on("data", (d: Buffer) => { se += d; });
+          p.on("close", (c) => res(c === 0 ? { ok: true, out: so, err: null } : { ok: false, out: so, err: se || `Exit ${c}` }));
+          p.on("error", (e) => res({ ok: false, out: "", err: e.message }));
+        });
+        try {
+          const od = JSON.parse(await fs.readFile(of2, "utf8")) as { pipeline?: Record<string, unknown>; workflow?: Record<string, unknown> };
+          if (od.pipeline) Object.assign(pipelineCtx, od.pipeline);
+          if (od.workflow) Object.assign(workflowCtx, od.workflow);
+        } catch {}
+        await fs.rm(tmp, { recursive: true, force: true });
+        ok = r.ok; out = r.out; err = r.err;
+
+      } else if (node.type === "call_subflow") {
+        const subWfId = (cfg.workflowId as string) ?? "";
+        if (!subWfId) { ok = false; err = "Nenhum sub-workflow selecionado"; }
+        else {
+          const subN = await db.select().from(nodesTable).where(eq(nodesTable.workflowId, subWfId));
+          const subE = await db.select().from(edgesTable).where(eq(edgesTable.workflowId, subWfId));
+          const subParams = ((cfg.inputParams as { key: string; value: string }[]) ?? []).filter((p) => p.key?.trim());
+          const subInit: Record<string, unknown> = { ...pipelineCtx };
+          for (const p of subParams) {
+            try { subInit[p.key] = JSON.parse(p.value); } catch { subInit[p.key] = pipelineCtx[p.value] ?? p.value; }
+          }
+          const sr = await runSubWorkflowInline({
+            workflowId: subWfId, nodes: subN, edges: subE,
+            initialPipeline: subInit, initialWorkflow: { ...workflowCtx },
+            parentExecutionId, parentNodeLabel: node.label, venovsDir, depth: depth + 1,
+          });
+          const ov = (cfg.outputVar as string)?.trim() ?? "";
+          if (sr.success) {
+            if (ov) pipelineCtx[ov] = sr.finalPipeline; else Object.assign(pipelineCtx, sr.finalPipeline);
+            ok = true; out = `Sub-flow concluído → ${ov ? `"${ov}"` : "merged"}`;
+          } else { ok = false; err = sr.error ?? "Sub-flow falhou"; }
+        }
+      } else {
+        out = `[sub-flow] Nodo "${node.type}" (${node.label}) executado`; ok = true;
+      }
+    } catch (e: any) { ok = false; err = e?.message ?? String(e); }
+
+    if (out) await addLog(parentExecutionId, null, "info", `  [${node.label}] ${out.trim()}`);
+    if (err) await addLog(parentExecutionId, null, "error", `  [${node.label}] ${err.trim()}`);
+
+    if (!ok && node.stopOnError && !node.continueOnError) {
+      return { success: false, finalPipeline: pipelineCtx, error: err ?? "Node failed" };
+    }
+  }
+
+  return { success: true, finalPipeline: pipelineCtx };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function runWorkflow({
   executionId,
   workflowId,
@@ -1659,6 +1837,59 @@ async function runWorkflow({
           if (output) await addLog(executionId, node.id, "info", output);
           if (error)  await addLog(executionId, node.id, "error", error);
 
+        } else if (node.type === "call_subflow") {
+          // ── Call sub-flow: run another workflow inline ─────────────
+          const config = node.config as Record<string, unknown>;
+          const subWorkflowId = (config.workflowId as string)?.trim() ?? "";
+          const inputParams = ((config.inputParams as { key: string; value: string }[]) ?? []).filter((p) => p.key?.trim());
+          const outputVar = (config.outputVar as string)?.trim() ?? "";
+
+          if (!subWorkflowId) {
+            success = false;
+            error = "Nenhum sub-workflow selecionado no nodo Call Sub-flow";
+            await addLog(executionId, node.id, "error", error);
+          } else {
+            const subNodes = await db.select().from(nodesTable).where(eq(nodesTable.workflowId, subWorkflowId));
+            const subEdges = await db.select().from(edgesTable).where(eq(edgesTable.workflowId, subWorkflowId));
+
+            // Build initial pipeline: copy current + inject inputParams
+            const subInitPipeline: Record<string, unknown> = { ...pipelineContext };
+            for (const param of inputParams) {
+              try { subInitPipeline[param.key] = JSON.parse(param.value); }
+              catch { subInitPipeline[param.key] = pipelineContext[param.value] ?? param.value; }
+            }
+
+            await addLog(executionId, node.id, "info",
+              `Chamando sub-flow "${subWorkflowId}" com ${inputParams.length} parâmetro(s)${outputVar ? ` → "${outputVar}"` : ""}`);
+
+            const subResult = await runSubWorkflowInline({
+              workflowId: subWorkflowId,
+              nodes: subNodes,
+              edges: subEdges,
+              initialPipeline: subInitPipeline,
+              initialWorkflow: { ...workflowContext },
+              parentExecutionId: executionId,
+              parentNodeLabel: node.label,
+              venovsDir,
+              depth: 0,
+            });
+
+            if (subResult.success) {
+              if (outputVar) {
+                pipelineContext[outputVar] = subResult.finalPipeline;
+              } else {
+                Object.assign(pipelineContext, subResult.finalPipeline);
+              }
+              success = true;
+              output = `Sub-flow concluído → ${outputVar ? `salvo em pipeline["${outputVar}"]` : "mesclado no pipeline"}`;
+              await addLog(executionId, node.id, "info", output);
+            } else {
+              success = false;
+              error = subResult.error ?? "Sub-flow falhou";
+              await addLog(executionId, node.id, "error", error);
+            }
+          }
+
         } else {
           output = `Node type '${node.type}' executed.`;
           success = true;
@@ -1668,6 +1899,25 @@ async function runWorkflow({
         success = false;
         error = e?.message ?? String(e);
         await addLog(executionId, node.id, "error", error!);
+      }
+
+      // ── Universal nodeOutputVar: capture pipeline diff at named key ──
+      const universalOutputVar = (nodeConfig.nodeOutputVar as string | undefined)?.trim();
+      if (universalOutputVar && success) {
+        const beforePipeline = inputSnapshot.pipeline as Record<string, unknown>;
+        const changedEntries: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(pipelineContext)) {
+          if (k === universalOutputVar) continue;
+          const prevVal = beforePipeline[k];
+          if (!(k in beforePipeline) || JSON.stringify(prevVal) !== JSON.stringify(v)) {
+            changedEntries[k] = v;
+          }
+        }
+        if (Object.keys(changedEntries).length === 1) {
+          pipelineContext[universalOutputVar] = Object.values(changedEntries)[0];
+        } else if (Object.keys(changedEntries).length > 1) {
+          pipelineContext[universalOutputVar] = changedEntries;
+        }
       }
 
       const nodeEnd = Date.now();
