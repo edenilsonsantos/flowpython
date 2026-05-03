@@ -1,21 +1,16 @@
-import { useState, useEffect, useRef, createContext, useContext, useCallback } from "react";
+import { useState, useEffect, useRef, createContext, useContext } from "react";
 import { createPortal } from "react-dom";
-import { Node as ReactFlowNode } from "reactflow";
-import { getNodeDef, NODE_CATEGORY_META } from "@/lib/node-definitions";
+import { NODE_DEFINITIONS, NODE_CATEGORY_META, NodeDef } from "@/lib/node-definitions";
 import { Link2, Search, X } from "lucide-react";
 
 // ── Context ──────────────────────────────────────────────────────────────────
 
 export interface QuickConnectCtxValue {
-  nodes: ReactFlowNode[];
-  edges: { source: string; target: string }[];
-  onQuickConnect: (sourceId: string, targetId: string) => void;
+  onAddAndConnect: (sourceId: string, nodeType: string) => void;
 }
 
 export const QuickConnectCtx = createContext<QuickConnectCtxValue>({
-  nodes: [],
-  edges: [],
-  onQuickConnect: () => {},
+  onAddAndConnect: () => {},
 });
 
 // ── Popup component ───────────────────────────────────────────────────────────
@@ -26,64 +21,72 @@ interface QuickConnectPopupProps {
   onClose: () => void;
 }
 
+// Only node types that make sense as connection targets (no triggers)
+const CONNECTABLE_DEFS: NodeDef[] = NODE_DEFINITIONS.filter(
+  (d) => !d.type.startsWith("trigger_") && d.hasInput
+);
+
+// Group by category
+const CATEGORY_ORDER = ["logic", "transform", "variables", "data", "integration", "utility", "database"] as const;
+
 export function QuickConnectPopup({ sourceNodeId, anchorRect, onClose }: QuickConnectPopupProps) {
-  const { nodes, edges, onQuickConnect } = useContext(QuickConnectCtx);
+  const { onAddAndConnect } = useContext(QuickConnectCtx);
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
 
-  const alreadyConnected = new Set(
-    edges.filter((e) => e.source === sourceNodeId).map((e) => e.target)
-  );
+  const q = query.toLowerCase().trim();
+  const filtered = q
+    ? CONNECTABLE_DEFS.filter((d) =>
+        d.label.toLowerCase().includes(q) ||
+        d.type.toLowerCase().includes(q) ||
+        d.description.toLowerCase().includes(q) ||
+        d.category.toLowerCase().includes(q)
+      )
+    : CONNECTABLE_DEFS;
 
-  const filtered = nodes.filter((n) => {
-    if (n.id === sourceNodeId) return false;
-    if (!query.trim()) return true;
-    const label = ((n.data.label as string) ?? "").toLowerCase();
-    const type = ((n.data.type as string) ?? "").toLowerCase();
-    const q = query.toLowerCase();
-    return label.includes(q) || type.includes(q);
-  });
+  // Group by category when no query; flat when searching
+  const grouped: { category: string; defs: NodeDef[] }[] = [];
+  if (q) {
+    grouped.push({ category: "", defs: filtered });
+  } else {
+    for (const cat of CATEGORY_ORDER) {
+      const defs = filtered.filter((d) => d.category === cat);
+      if (defs.length) grouped.push({ category: cat, defs });
+    }
+  }
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
 
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
-      if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
-        onClose();
-      }
+      if (popupRef.current && !popupRef.current.contains(e.target as Node)) onClose();
     };
-    requestAnimationFrame(() => {
-      document.addEventListener("mousedown", handleClick);
-    });
+    requestAnimationFrame(() => document.addEventListener("mousedown", handleClick));
     return () => document.removeEventListener("mousedown", handleClick);
   }, [onClose]);
 
   // Position: to the right of the anchor, vertically centred
-  const popupWidth = 280;
-  const popupMaxH = 340;
+  const popupWidth = 290;
+  const popupMaxH = 380;
   const viewW = window.innerWidth;
   const viewH = window.innerHeight;
 
-  let left = anchorRect.right + 8;
-  if (left + popupWidth > viewW - 8) left = anchorRect.left - popupWidth - 8;
+  let left = anchorRect.right + 10;
+  if (left + popupWidth > viewW - 8) left = anchorRect.left - popupWidth - 10;
 
-  let top = anchorRect.top - 16;
+  let top = anchorRect.top - 20;
   if (top + popupMaxH > viewH - 8) top = viewH - popupMaxH - 8;
   if (top < 8) top = 8;
 
-  const handleConnect = (targetId: string) => {
-    onQuickConnect(sourceNodeId, targetId);
+  const handleSelect = (def: NodeDef) => {
+    onAddAndConnect(sourceNodeId, def.type);
     onClose();
   };
 
@@ -99,7 +102,7 @@ export function QuickConnectPopup({ sourceNodeId, anchorRect, onClose }: QuickCo
         background: "hsl(var(--card))",
         border: "1px solid hsl(var(--border))",
         borderRadius: 10,
-        boxShadow: "0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3)",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.3)",
         zIndex: 9999,
         display: "flex",
         flexDirection: "column",
@@ -117,7 +120,7 @@ export function QuickConnectPopup({ sourceNodeId, anchorRect, onClose }: QuickCo
       }}>
         <Link2 size={13} style={{ color: "#a78bfa", flexShrink: 0 }} />
         <span style={{ fontSize: 12, fontWeight: 700, color: "hsl(var(--foreground))", flex: 1 }}>
-          Conectar a...
+          Adicionar e conectar
         </span>
         <button
           onClick={onClose}
@@ -154,94 +157,85 @@ export function QuickConnectPopup({ sourceNodeId, anchorRect, onClose }: QuickCo
         </div>
       </div>
 
-      {/* Node list */}
+      {/* Node list grouped by category */}
       <div style={{ overflowY: "auto", flex: 1 }}>
         {filtered.length === 0 ? (
           <div style={{ padding: "16px 12px", textAlign: "center", fontSize: 12, color: "hsl(var(--muted-foreground))" }}>
             Nenhum nodo encontrado
           </div>
         ) : (
-          filtered.map((node) => {
-            const def = getNodeDef(node.data.type as string);
-            const color = def?.color ?? "#94a3b8";
-            const catMeta = def ? NODE_CATEGORY_META[def.category] : null;
-            const label = (node.data.label as string) ?? (def?.label ?? "Nodo");
-            const isConnected = alreadyConnected.has(node.id);
-
-            return (
-              <button
-                key={node.id}
-                onClick={() => !isConnected && handleConnect(node.id)}
-                disabled={isConnected}
-                style={{
-                  width: "100%", display: "flex", alignItems: "center", gap: 9,
-                  padding: "8px 12px", background: "transparent", border: "none",
-                  cursor: isConnected ? "default" : "pointer", textAlign: "left",
-                  opacity: isConnected ? 0.5 : 1,
-                  transition: "background 0.1s",
-                }}
-                onMouseEnter={(e) => { if (!isConnected) (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-              >
-                {/* Color dot */}
+          grouped.map((group) => (
+            <div key={group.category}>
+              {group.category && (
                 <div style={{
-                  width: 28, height: 28, borderRadius: 7, flexShrink: 0,
-                  background: catMeta?.bg ?? "rgba(148,163,184,0.12)",
-                  border: `1px solid ${color}44`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
+                  padding: "6px 12px 3px",
+                  fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: NODE_CATEGORY_META[group.category as keyof typeof NODE_CATEGORY_META]?.color ?? "hsl(var(--muted-foreground))",
+                  borderBottom: "1px solid hsl(var(--border))",
+                  background: "rgba(255,255,255,0.015)",
                 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+                  {NODE_CATEGORY_META[group.category as keyof typeof NODE_CATEGORY_META]?.label ?? group.category}
                 </div>
+              )}
+              {group.defs.map((def) => {
+                const catMeta = NODE_CATEGORY_META[def.category];
+                return (
+                  <button
+                    key={def.type}
+                    onClick={() => handleSelect(def)}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", gap: 9,
+                      padding: "7px 12px", background: "transparent", border: "none",
+                      cursor: "pointer", textAlign: "left",
+                      transition: "background 0.1s",
+                    }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.05)"; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+                  >
+                    {/* Icon dot */}
+                    <div style={{
+                      width: 26, height: 26, borderRadius: 7, flexShrink: 0,
+                      background: catMeta?.bg ?? "rgba(148,163,184,0.12)",
+                      border: `1px solid ${def.color}44`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <div style={{ width: 7, height: 7, borderRadius: "50%", background: def.color }} />
+                    </div>
 
-                {/* Label + type */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 12, fontWeight: 600, color: "hsl(var(--foreground))",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}>
-                    {label}
-                  </div>
-                  <div style={{ fontSize: 10, color, fontWeight: 500 }}>
-                    {def?.category?.toUpperCase() ?? "NODE"}
-                  </div>
-                </div>
+                    {/* Label + description */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontSize: 12, fontWeight: 600, color: "hsl(var(--foreground))",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      }}>
+                        {def.label}
+                      </div>
+                      <div style={{
+                        fontSize: 10, color: "hsl(var(--muted-foreground))",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      }}>
+                        {def.description}
+                      </div>
+                    </div>
 
-                {isConnected ? (
-                  <span style={{ fontSize: 10, color: "#10b981", fontWeight: 700, flexShrink: 0 }}>✓ Ligado</span>
-                ) : (
-                  <Link2 size={11} style={{ color: "#a78bfa", flexShrink: 0, opacity: 0.6 }} />
-                )}
-              </button>
-            );
-          })
+                    <Link2 size={10} style={{ color: "#a78bfa", flexShrink: 0, opacity: 0.5 }} />
+                  </button>
+                );
+              })}
+            </div>
+          ))
         )}
       </div>
 
       {/* Footer hint */}
       <div style={{
-        padding: "6px 12px", borderTop: "1px solid hsl(var(--border))", flexShrink: 0,
+        padding: "5px 12px", borderTop: "1px solid hsl(var(--border))", flexShrink: 0,
         fontSize: 10, color: "hsl(var(--muted-foreground))", textAlign: "center",
       }}>
-        Clique para conectar • Esc para fechar
+        Cria um novo nodo e conecta • Esc para fechar
       </div>
     </div>,
     document.body
   );
-}
-
-// ── Hook used by CanvasNode ──────────────────────────────────────────────────
-
-export function useQuickConnect(nodeId: string) {
-  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
-
-  const open = useCallback(() => {
-    if (btnRef.current) {
-      setAnchorRect(btnRef.current.getBoundingClientRect());
-    }
-  }, []);
-
-  const close = useCallback(() => setAnchorRect(null), []);
-
-  return { btnRef, anchorRect, open, close };
 }

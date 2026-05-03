@@ -1,4 +1,4 @@
-import { memo, useState, useContext } from "react";
+import { memo, useState, useContext, useRef } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
 import {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
@@ -33,9 +33,18 @@ export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps
   const isPinned = !!(data.config as Record<string, unknown>)?.pinned;
   const nodeId = id;
 
-  const { onQuickConnect } = useContext(QuickConnectCtx);
+  const { onAddAndConnect } = useContext(QuickConnectCtx);
   const [popupAnchor, setPopupAnchor] = useState<DOMRect | null>(null);
   const [hovered, setHovered] = useState(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelHide = () => {
+    if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
+  };
+  const scheduleHide = () => {
+    cancelHide();
+    hideTimer.current = setTimeout(() => { setHovered(false); hideTimer.current = null; }, 450);
+  };
 
   // For variable nodes: show scope badge
   const cfg = (data.config as Record<string, unknown>) ?? {};
@@ -64,8 +73,8 @@ export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps
 
   return (
     <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={() => { cancelHide(); setHovered(true); }}
+      onMouseLeave={scheduleHide}
       style={{
         border: `2px solid ${selected ? color : isPinned ? `${color}88` : "rgba(255,255,255,0.12)"}`,
         borderRadius: 10,
@@ -269,6 +278,8 @@ export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps
             className="nodrag nopan"
             title="Adicionar nova conexão"
             onClick={handleQuickConnectClick}
+            onMouseEnter={() => { cancelHide(); setHovered(true); }}
+            onMouseLeave={scheduleHide}
             style={{
               position: "absolute",
               right: -34,

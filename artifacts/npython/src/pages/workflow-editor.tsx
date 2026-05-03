@@ -51,7 +51,7 @@ import { autocompletion } from "@codemirror/autocomplete";
 import { CanvasNode } from "@/components/canvas-node";
 import { EdgeWithDelete } from "@/components/edge-with-delete";
 import { NodePalette } from "@/components/node-palette";
-import { NodeDef, getNodeDef, isTriggerType, isDatabaseNodeType, parseDbNodeType, DB_META, DB_OP_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
+import { NodeDef, NODE_DEFINITIONS, getNodeDef, isTriggerType, isDatabaseNodeType, parseDbNodeType, DB_META, DB_OP_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
 import { pythonLibraryCompletionSource } from "@/lib/python-completions";
 import { copilotExtension } from "@/lib/copilot-extension";
 import { QuickConnectCtx } from "@/components/quick-connect-popup";
@@ -344,26 +344,46 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
 
   const hasTrigger = nodes.some((n) => isTriggerType(n.data.type as string));
 
-  // ── Quick-connect: create edge from source → target ───────────────
-  const handleQuickConnect = useCallback((sourceId: string, targetId: string) => {
+  // ── Quick-connect: create new node of given type and connect ─────
+  const handleAddAndConnect = useCallback((sourceId: string, nodeType: string) => {
+    const def = NODE_DEFINITIONS.find((d) => d.type === nodeType);
+    if (!def) return;
+    const sourceNode = nodes.find((n) => n.id === sourceId);
+    const pos = sourceNode
+      ? { x: sourceNode.position.x + 280, y: sourceNode.position.y }
+      : { x: 400 + Math.random() * 100, y: 200 + Math.random() * 100 };
+    const newId = `node_${Date.now()}`;
+    const newNode: ReactFlowNode = {
+      id: newId,
+      type: "custom",
+      position: pos,
+      data: {
+        label: def.label,
+        type: def.type,
+        config: { ...def.defaultConfig },
+        retryCount: 0,
+        retryDelayMs: 1000,
+        continueOnError: false,
+        stopOnError: true,
+      },
+    };
+    setNodes((nds) => [...nds, newNode]);
     setEdges((eds) => {
-      if (eds.some((e) => e.source === sourceId && e.target === targetId)) return eds;
+      if (eds.some((e) => e.source === sourceId && e.target === newId)) return eds;
       return addEdge({
         id: `edge_${Date.now()}`,
         source: sourceId,
-        target: targetId,
+        target: newId,
         type: "custom",
         animated: true,
         style: { stroke: "hsl(var(--primary))", strokeWidth: 2 },
       }, eds);
     });
-  }, []);
+  }, [nodes]);
 
   const quickConnectCtxValue = useMemo(() => ({
-    nodes,
-    edges: edges.map((e) => ({ source: e.source, target: e.target })),
-    onQuickConnect: handleQuickConnect,
-  }), [nodes, edges, handleQuickConnect]);
+    onAddAndConnect: handleAddAndConnect,
+  }), [handleAddAndConnect]);
 
   // Map each pipeline variable name to its source node's color + label
   const varColorMap = useMemo<Record<string, VarColorInfo>>(() => {
