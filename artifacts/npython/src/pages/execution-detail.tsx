@@ -632,24 +632,14 @@ export default function ExecutionDetail() {
           </Button>
           {!isRunning && (
             <Button
-              variant={editMode ? "secondary" : "outline"}
+              variant="outline"
               size="sm"
-              onClick={() => { setEditMode(!editMode); if (editMode) setEditedConfigs({}); }}
+              onClick={() => setLocation(`/workflows/${debugData.workflowId}/edit?fromExecution=${debugData.id}`)}
               className="gap-1.5"
+              title="Abrir o workflow no editor com os dados desta execução pinados em cada nodo"
             >
-              {editMode ? <X size={13} /> : <Edit2 size={13} />}
-              {editMode ? "Cancelar edição" : "Editar nodos"}
-            </Button>
-          )}
-          {editMode && (
-            <Button
-              size="sm"
-              onClick={handleApplyToProduction}
-              disabled={isSaving || !hasEdits}
-              className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
-            >
-              {isSaving ? <Activity size={13} className="animate-spin" /> : <Save size={13} />}
-              Aplicar ao Workflow
+              <Edit2 size={13} />
+              Editar nodos
             </Button>
           )}
           <Link href={`/workflows/${debugData.workflowId}/edit`}>

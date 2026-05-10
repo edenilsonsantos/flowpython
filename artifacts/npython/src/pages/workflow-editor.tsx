@@ -96,6 +96,14 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const reactFlow = useReactFlow();
   const wrapperRef = useRef<HTMLDivElement>(null);
 
+  // ── "Editar nodos" from executions page: pin each node's config with its
+  //    snapshot from the chosen execution so the user can move/edit/add freely.
+  const fromExecutionId = (() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("fromExecution");
+  })();
+  const [pinnedFromExec, setPinnedFromExec] = useState<{ executionId: string; pinnedCount: number } | null>(null);
+
   const { data: workflow, isLoading } = useGetWorkflow(workflowId, {
     query: { enabled: !!workflowId, queryKey: getGetWorkflowQueryKey(workflowId) },
   });
@@ -149,30 +157,74 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   useEffect(() => { fetchLastRunOutputs(); }, [fetchLastRunOutputs]);
   useEffect(() => { fetchInstalledPkgs(); }, [fetchInstalledPkgs]);
 
-  // Load workflow nodes/edges once
+  // Load workflow nodes/edges once. If we arrived via ?fromExecution=:id,
+  // first fetch the execution's debug data and pin each node's snapshot.
   useEffect(() => {
-    if (workflow && !initRef.current) {
-      initRef.current = true;
-      setNodes(
-        (workflow.nodes || []).map((n) => ({
-          id: n.id,
-          type: "custom",
-          position: { x: n.positionX, y: n.positionY },
-          data: { ...n },
-        }))
-      );
-      setEdges(
-        (workflow.edges || []).map((e) => ({
-          id: e.id,
-          type: "custom",
-          source: e.sourceNodeId,
-          target: e.targetNodeId,
-          label: e.label ?? undefined,
-          animated: true,
-          style: { stroke: "hsl(var(--primary))", strokeWidth: 2 },
-        }))
-      );
+    if (!workflow || initRef.current) return;
+    initRef.current = true;
+
+    const baseEdges = (workflow.edges || []).map((e) => ({
+      id: e.id,
+      type: "custom",
+      source: e.sourceNodeId,
+      target: e.targetNodeId,
+      label: e.label ?? undefined,
+      animated: true,
+      style: { stroke: "hsl(var(--primary))", strokeWidth: 2 },
+    }));
+    const baseNodes = (workflow.nodes || []).map((n) => ({
+      id: n.id,
+      type: "custom" as const,
+      position: { x: n.positionX, y: n.positionY },
+      data: { ...n } as Record<string, unknown>,
+    }));
+
+    if (!fromExecutionId) {
+      setNodes(baseNodes);
+      setEdges(baseEdges);
+      return;
     }
+
+    // Pin each node with the snapshot captured during the chosen execution.
+    (async () => {
+      try {
+        const res = await fetch(`/api/executions/${fromExecutionId}/debug`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const debug = await res.json() as {
+          nodeResults: { nodeId: string; outputSnapshot?: { pipeline?: Record<string, unknown> } }[];
+        };
+        const snapshotsByNode: Record<string, Record<string, unknown>> = {};
+        for (const r of debug.nodeResults ?? []) {
+          const pipeline = r.outputSnapshot?.pipeline;
+          if (pipeline && typeof pipeline === "object") snapshotsByNode[r.nodeId] = pipeline;
+        }
+        let pinnedCount = 0;
+        const pinnedNodes = baseNodes.map((n) => {
+          const snap = snapshotsByNode[n.id];
+          if (!snap || Object.keys(snap).length === 0) return n;
+          pinnedCount += 1;
+          const data = n.data as Record<string, unknown>;
+          const cfg = (data.config as Record<string, unknown>) ?? {};
+          return {
+            ...n,
+            data: { ...data, config: { ...cfg, pinned: true, pinnedData: snap } },
+          };
+        });
+        setNodes(pinnedNodes);
+        setEdges(baseEdges);
+        setPinnedFromExec({ executionId: fromExecutionId, pinnedCount });
+        toast({
+          title: "Snapshot da execução carregado",
+          description: `${pinnedCount} nodo(s) pinado(s) com dados da execução. Salve para persistir.`,
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "erro desconhecido";
+        toast({ title: "Falha ao carregar execução", description: msg, variant: "destructive" });
+        setNodes(baseNodes);
+        setEdges(baseEdges);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workflow]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -570,6 +622,40 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
                 borderRadius: 6, padding: "3px 8px",
               }}>
                 <AlertTriangle size={12} /> Adicione um Trigger
+              </div>
+            )}
+            {pinnedFromExec && (
+              <div
+                title={`Cada nodo está usando os dados produzidos na execução ${pinnedFromExec.executionId.slice(0, 8)}…`}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600,
+                  color: "#a78bfa", background: "rgba(167,139,250,0.10)",
+                  border: "1px solid rgba(167,139,250,0.35)", borderRadius: 6, padding: "3px 10px",
+                }}
+              >
+                <Pin size={11} /> Snapshot pinado · {pinnedFromExec.pinnedCount} nodo(s)
+                <button
+                  onClick={() => {
+                    // Strip pinned/pinnedData from every node's config, then drop the badge.
+                    setNodes((nds) => nds.map((n) => {
+                      const data = n.data as Record<string, unknown>;
+                      const cfg = { ...((data.config as Record<string, unknown>) ?? {}) };
+                      delete cfg.pinned;
+                      delete cfg.pinnedData;
+                      return { ...n, data: { ...data, config: cfg } };
+                    }));
+                    setPinnedFromExec(null);
+                    toast({ title: "Snapshots removidos de todos os nodos" });
+                  }}
+                  style={{
+                    marginLeft: 4, background: "transparent", border: "none",
+                    color: "#a78bfa", cursor: "pointer", padding: "0 2px",
+                    display: "flex", alignItems: "center",
+                  }}
+                  title="Remover todos os pins"
+                >
+                  <X size={11} />
+                </button>
               </div>
             )}
           </div>
