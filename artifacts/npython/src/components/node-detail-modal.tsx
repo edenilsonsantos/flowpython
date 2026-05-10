@@ -43,16 +43,19 @@ function shortPreview(v: unknown, max = 56): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
 
-// Build a $('Label').json.path expression from a path of segments
-function buildVarRef(nodeLabel: string, path: (string | number)[]): string {
-  const safeLabel = nodeLabel.replace(/'/g, "\\'");
-  let ref = `$('${safeLabel}').json`;
+// Build a Python `pipeline["x"][...]` expression from a path of segments.
+// All upstream variables live in the shared `pipeline` dict regardless of
+// which node produced them, so the node label is informational only and is
+// intentionally not emitted into the generated code.
+function buildVarRef(_nodeLabel: string, path: (string | number)[]): string {
+  if (path.length === 0) return "pipeline";
+  let ref = "pipeline";
   for (const seg of path) {
     if (typeof seg === "number") {
       ref += `[${seg}]`;
-    } else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(seg)) {
-      ref += `.${seg}`;
     } else {
+      // Always use bracket + JSON-quoted key so it works for any name
+      // (including ones with hyphens, dots, spaces, reserved words).
       ref += `[${JSON.stringify(seg)}]`;
     }
   }
@@ -526,7 +529,7 @@ export function NodeDetailModal({
 
   const handleInsert = useCallback((ref: string) => insertVarRef(ref, toast), [toast]);
 
-  // Build a varColorMap that includes BOTH legacy pipeline["x"] vars and $('label').json refs
+  // Build a varColorMap of pipeline["x"] refs colored by the originating node
   const varColorMap = useMemo<Record<string, VarColorInfo>>(() => {
     const map: Record<string, VarColorInfo> = {};
     for (const [id, out] of Object.entries(lastRunOutputs)) {
@@ -851,7 +854,7 @@ export function NodeDetailModal({
           }}>
             <span>↔ Arraste variáveis do INPUT/OUTPUT para campos no centro</span>
             <span>•</span>
-            <span>Sintaxe: <code style={{ color: "#a78bfa" }}>{`$('Nome do nodo').json.campo`}</code></span>
+            <span>Sintaxe: <code style={{ color: "#a78bfa" }}>{`pipeline["nome_da_variavel"]`}</code></span>
             <span style={{ flex: 1 }} />
             <span>ESC para fechar</span>
           </div>

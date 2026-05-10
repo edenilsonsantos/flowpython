@@ -465,7 +465,7 @@ export default function ExecutionDetail() {
     : {};
 
   // Build NodeOutputMap from this execution's snapshots so the modal's
-  // INPUT/OUTPUT panels and the $('Label').json drag&drop work natively.
+  // INPUT/OUTPUT panels and the pipeline["x"] drag&drop work natively.
   const lastRunOutputs: NodeOutputMap = (() => {
     const map: NodeOutputMap = {};
     if (!debugData) return map;
@@ -697,7 +697,7 @@ export default function ExecutionDetail() {
 
       </div>
 
-      {/* ── Detail modal (3-col INPUT / CONFIG / OUTPUT, $('Label').json drag&drop) ── */}
+      {/* ── Detail modal (3-col INPUT / CONFIG / OUTPUT, pipeline["x"] drag&drop) ── */}
       <NodeDetailModal
         open={!!selectedNodeId && !!modalNode}
         onClose={() => setSelectedNodeId(null)}
