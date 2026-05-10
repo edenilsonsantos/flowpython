@@ -187,6 +187,11 @@ export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps
         {hasOutput && (() => {
           const handles = getNodeOutputHandles(data.type as string, cfg);
           const isMulti = handles.length > 1;
+          // chosenBranch is set by execution-detail for branching nodes that
+          // already ran — highlight the handle whose id matches in green and
+          // dim the others so the user sees the path the flow took.
+          const chosenBranch = data.chosenBranch as string | undefined;
+          const hasChoice = isMulti && !!chosenBranch;
           return (
             <>
               {handles.map((h, i) => {
@@ -197,6 +202,11 @@ export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps
                 const topPct = isMulti
                   ? `${((i + 1) / (handles.length + 1)) * 100}%`
                   : "50%";
+                const isChosen = hasChoice && h.id === chosenBranch;
+                const isDimmed = hasChoice && !isChosen;
+                const handleColor = isChosen ? "#22c55e" : h.color;
+                const labelColor  = isChosen ? "#22c55e" : (isDimmed ? "#475569" : h.color);
+                const opacity     = isDimmed ? 0.35 : 1;
                 return (
                   <React.Fragment key={h.id}>
                     <Handle
@@ -205,12 +215,18 @@ export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps
                       position={Position.Right}
                       isConnectable={isConnectable}
                       style={{
-                        background: h.color,
-                        border: "2px solid hsl(var(--background))",
+                        background: handleColor,
+                        border: isChosen
+                          ? "2px solid #22c55e"
+                          : "2px solid hsl(var(--background))",
+                        boxShadow: isChosen
+                          ? "0 0 0 3px rgba(34,197,94,0.35), 0 0 8px rgba(34,197,94,0.6)"
+                          : undefined,
                         width: HANDLE_SIZE,
                         height: HANDLE_SIZE,
                         right: -HANDLE_SIZE / 2 - 1,
                         top: topPct,
+                        opacity,
                       }}
                     />
                     {isMulti && (
@@ -222,14 +238,15 @@ export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps
                           top: topPct,
                           transform: "translate(100%, -50%)",
                           fontSize: 9,
-                          fontWeight: 600,
-                          color: h.color,
+                          fontWeight: isChosen ? 700 : 600,
+                          color: labelColor,
                           whiteSpace: "nowrap",
                           pointerEvents: "none",
                           textShadow: "0 1px 2px rgba(0,0,0,0.6)",
+                          opacity,
                         }}
                       >
-                        {h.label}
+                        {isChosen ? `✓ ${h.label}` : h.label}
                       </span>
                     )}
                   </React.Fragment>

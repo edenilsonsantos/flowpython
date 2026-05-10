@@ -403,21 +403,40 @@ export default function ExecutionDetail() {
       );
 
       setRfNodes(
-        data.nodes.map((n) => ({
-          id: n.id,
-          type: "custom",
-          position: { x: n.positionX, y: n.positionY },
-          data: {
-            type: n.type,
-            label: n.label,
-            config: n.config,
-            executionStatus: nodeResultsMap[n.id]?.status ?? "skipped",
-            executionDurationMs: nodeResultsMap[n.id]?.durationMs ?? undefined,
-          },
-          selectable: true,
-          draggable: false,
-          connectable: false,
-        }))
+        data.nodes.map((n) => {
+          // Derive which output branch was taken for branching nodes,
+          // so canvas-node can highlight the corresponding handle in green.
+          let chosenBranch: string | undefined;
+          const snap = nodeResultsMap[n.id]?.outputSnapshot as
+            { pipeline?: Record<string, unknown> } | undefined;
+          const pl = snap?.pipeline ?? {};
+          if (n.type === "if_and") {
+            const r = pl["_condition_result"];
+            if (r !== undefined) chosenBranch = (r === true || r === "true") ? "true" : "false";
+          } else if (n.type === "if_else") {
+            const b = pl["_branch"];
+            if (typeof b === "string") chosenBranch = b;
+          } else if (n.type === "case" || n.type === "switch") {
+            const r = pl["_switch_result"];
+            if (typeof r === "string") chosenBranch = r;
+          }
+          return {
+            id: n.id,
+            type: "custom",
+            position: { x: n.positionX, y: n.positionY },
+            data: {
+              type: n.type,
+              label: n.label,
+              config: n.config,
+              executionStatus: nodeResultsMap[n.id]?.status ?? "skipped",
+              executionDurationMs: nodeResultsMap[n.id]?.durationMs ?? undefined,
+              chosenBranch,
+            },
+            selectable: true,
+            draggable: false,
+            connectable: false,
+          };
+        })
       );
 
       setRfEdges(
