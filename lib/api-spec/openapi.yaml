@@ -138,6 +138,13 @@ paths:
           required: true
           schema:
             type: string
+        - name: source
+          in: query
+          required: false
+          description: "Use 'draft' (default, current editor state) or 'published' (last published snapshot)."
+          schema:
+            type: string
+            enum: [draft, published]
       responses:
         "202":
           description: Execution started
@@ -145,6 +152,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Execution"
+
+  /workflows/{id}/publish:
+    post:
+      operationId: publishWorkflow
+      tags: [workflows]
+      summary: Publish current workflow draft as the active version
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workflow"
+    delete:
+      operationId: unpublishWorkflow
+      tags: [workflows]
+      summary: Remove the published version, leaving only the draft
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Unpublished
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workflow"
 
   /workflows/{id}/packages:
     get:
@@ -634,6 +677,11 @@ components:
           type: string
           nullable: true
           enum: [pending, running, success, failed, stopped, null]
+        publishedAt:
+          type: string
+          nullable: true
+        hasUnpublishedChanges:
+          type: boolean
         createdAt:
           type: string
         updatedAt:

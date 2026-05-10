@@ -35,6 +35,8 @@ router.get("/workflows", async (req, res) => {
       nodeCount: nodeCounts[w.id] ?? 0,
       lastExecutedAt: lastExecMap[w.id]?.startedAt?.toISOString() ?? null,
       lastStatus: lastExecMap[w.id]?.status ?? null,
+      publishedAt: w.publishedAt?.toISOString() ?? null,
+      hasUnpublishedChanges: w.publishedAt ? w.updatedAt.getTime() > w.publishedAt.getTime() : false,
       createdAt: w.createdAt.toISOString(),
       updatedAt: w.updatedAt.toISOString(),
     }));
@@ -107,6 +109,8 @@ router.get("/workflows/:id", async (req, res) => {
       nodeCount: nodes.length,
       lastExecutedAt: lastExec?.startedAt?.toISOString() ?? null,
       lastStatus: lastExec?.status ?? null,
+      publishedAt: workflow.publishedAt?.toISOString() ?? null,
+      hasUnpublishedChanges: workflow.publishedAt ? workflow.updatedAt.getTime() > workflow.publishedAt.getTime() : false,
       createdAt: workflow.createdAt.toISOString(),
       updatedAt: workflow.updatedAt.toISOString(),
       nodes: nodes.map((n) => ({
@@ -210,6 +214,81 @@ router.put("/workflows/:id", async (req, res) => {
       nodeCount: Number(nodeCount[0]?.cnt ?? 0),
       lastExecutedAt: null,
       lastStatus: null,
+      publishedAt: updated.publishedAt?.toISOString() ?? null,
+      hasUnpublishedChanges: updated.publishedAt ? updated.updatedAt.getTime() > updated.publishedAt.getTime() : false,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+    });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /workflows/:id/publish — snapshot current draft as published version
+router.post("/workflows/:id/publish", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [workflow] = await db.select().from(workflowsTable).where(eq(workflowsTable.id, id));
+    if (!workflow) return res.status(404).json({ error: "Workflow not found" });
+
+    const nodes = await db.select().from(nodesTable).where(eq(nodesTable.workflowId, id));
+    const edges = await db.select().from(edgesTable).where(eq(edgesTable.workflowId, id));
+
+    const snapshot = {
+      nodes: nodes.map((n) => ({
+        id: n.id, type: n.type, label: n.label,
+        positionX: n.positionX, positionY: n.positionY, config: n.config,
+        retryCount: n.retryCount, retryDelayMs: n.retryDelayMs,
+        continueOnError: n.continueOnError, stopOnError: n.stopOnError,
+      })),
+      edges: edges.map((e) => ({
+        id: e.id, sourceNodeId: e.sourceNodeId, targetNodeId: e.targetNodeId,
+        label: e.label, condition: e.condition,
+      })),
+    };
+
+    const publishedAt = new Date();
+    const [updated] = await db
+      .update(workflowsTable)
+      .set({ publishedAt, publishedSnapshot: snapshot, updatedAt: publishedAt })
+      .where(eq(workflowsTable.id, id))
+      .returning();
+
+    res.json({
+      id: updated!.id, name: updated!.name,
+      description: updated!.description ?? undefined,
+      active: updated!.active, tags: updated!.tags,
+      nodeCount: nodes.length,
+      lastExecutedAt: null, lastStatus: null,
+      publishedAt: updated!.publishedAt?.toISOString() ?? null,
+      hasUnpublishedChanges: false,
+      createdAt: updated!.createdAt.toISOString(),
+      updatedAt: updated!.updatedAt.toISOString(),
+    });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// DELETE /workflows/:id/publish — remove published snapshot
+router.delete("/workflows/:id/publish", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [updated] = await db
+      .update(workflowsTable)
+      .set({ publishedAt: null, publishedSnapshot: null })
+      .where(eq(workflowsTable.id, id))
+      .returning();
+    if (!updated) return res.status(404).json({ error: "Workflow not found" });
+
+    res.json({
+      id: updated.id, name: updated.name,
+      description: updated.description ?? undefined,
+      active: updated.active, tags: updated.tags,
+      nodeCount: 0, lastExecutedAt: null, lastStatus: null,
+      publishedAt: null, hasUnpublishedChanges: false,
       createdAt: updated.createdAt.toISOString(),
       updatedAt: updated.updatedAt.toISOString(),
     });

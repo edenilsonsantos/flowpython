@@ -781,8 +781,34 @@ router.post("/workflows/:id/execute", async (req, res) => {
 
     if (!workflow) return res.status(404).json({ error: "Workflow not found" });
 
-    const nodes = await db.select().from(nodesTable).where(eq(nodesTable.workflowId, workflowId));
-    const edges = await db.select().from(edgesTable).where(eq(edgesTable.workflowId, workflowId));
+    // Source: 'draft' (default) uses current nodes/edges; 'published' uses snapshot
+    const sourceParam = String(req.query.source ?? "draft");
+    let nodes: Awaited<ReturnType<typeof db.select>> | any[];
+    let edges: Awaited<ReturnType<typeof db.select>> | any[];
+
+    if (sourceParam === "published") {
+      const snap = workflow.publishedSnapshot as { nodes?: any[]; edges?: any[] } | null;
+      if (!snap || !snap.nodes) {
+        return res.status(409).json({ error: "Workflow has no published version. Publish it first or use source=draft." });
+      }
+      nodes = snap.nodes.map((n: any) => ({
+        id: n.id, workflowId, type: n.type, label: n.label,
+        positionX: n.positionX ?? 0, positionY: n.positionY ?? 0,
+        config: n.config ?? {}, retryCount: n.retryCount ?? 0,
+        retryDelayMs: n.retryDelayMs ?? 1000,
+        continueOnError: n.continueOnError ?? false,
+        stopOnError: n.stopOnError ?? true,
+        createdAt: new Date(), updatedAt: new Date(),
+      }));
+      edges = (snap.edges ?? []).map((e: any) => ({
+        id: e.id, workflowId,
+        sourceNodeId: e.sourceNodeId, targetNodeId: e.targetNodeId,
+        label: e.label ?? null, condition: e.condition ?? null,
+      }));
+    } else {
+      nodes = await db.select().from(nodesTable).where(eq(nodesTable.workflowId, workflowId));
+      edges = await db.select().from(edgesTable).where(eq(edgesTable.workflowId, workflowId));
+    }
 
     const executionId = generateId();
     const [execution] = await db
@@ -1155,9 +1181,19 @@ async function runWorkflow({
       try {
         // ── Pinned: return mock output without executing ────────────
         if (nodeConfig.pinned === true) {
-          output = String(nodeConfig.mockOutput ?? "(pinned — sem output definido)");
+          // pinnedData (object) merges into pipeline like a normal node output.
+          // mockOutput (string) kept for backwards compat.
+          const pinnedData = nodeConfig.pinnedData;
+          if (pinnedData && typeof pinnedData === "object" && !Array.isArray(pinnedData)) {
+            Object.assign(pipelineContext, pinnedData as Record<string, unknown>);
+            output = JSON.stringify(pinnedData, null, 2);
+          } else if (pinnedData !== undefined && pinnedData !== null) {
+            output = JSON.stringify(pinnedData, null, 2);
+          } else {
+            output = String(nodeConfig.mockOutput ?? "(pinned — sem output definido)");
+          }
           success = true;
-          await addLog(executionId, node.id, "info", `[PINNED] ${output}`);
+          await addLog(executionId, node.id, "info", `[PINNED] usando dados mockados`);
         } else if (node.type === "code") {
           const config = node.config as Record<string, unknown>;
           const userCode = (config.code as string) ?? "";

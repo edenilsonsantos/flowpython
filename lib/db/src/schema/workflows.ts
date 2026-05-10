@@ -8,6 +8,8 @@ export const workflowsTable = pgTable("workflows", {
   description: text("description"),
   active: boolean("active").notNull().default(false),
   tags: text("tags").array().notNull().default([]),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  publishedSnapshot: jsonb("published_snapshot"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

@@ -20,6 +20,8 @@ import {
   useGetWorkflow,
   useUpdateWorkflow,
   useExecuteWorkflow,
+  usePublishWorkflow,
+  useUnpublishWorkflow,
   Node as ApiNode,
   Edge as ApiEdge,
   getGetWorkflowQueryKey,
@@ -39,7 +41,7 @@ import {
   FlaskConical, Pin, PinOff, CheckCircle2, XCircle, Loader2, Plus, Package,
   Eye, EyeOff, Lock, ShieldOff, Shield, Database,
   ChevronDown, ChevronRight, Network, Copy, Zap, Download, PackageCheck,
-  Bot, Wand2, Sparkles, MoveRight, Share2,
+  Bot, Wand2, Sparkles, MoveRight, Share2, Globe2, GitCommit, Rocket,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -99,6 +101,8 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   });
   const updateWorkflow = useUpdateWorkflow();
   const executeWorkflow = useExecuteWorkflow();
+  const publishWorkflow = usePublishWorkflow();
+  const unpublishWorkflow = useUnpublishWorkflow();
 
   const [nodes, setNodes] = useState<ReactFlowNode[]>([]);
   const [edges, setEdges] = useState<ReactFlowEdge[]>([]);
@@ -285,6 +289,29 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       queryClient.invalidateQueries({ queryKey: getGetWorkflowQueryKey(workflowId) });
     } catch {
       toast({ title: "Erro ao salvar", variant: "destructive" });
+    }
+  };
+
+  // ── Publish / unpublish ──────────────────────────────────────────
+  const handlePublish = async () => {
+    try {
+      // Save first so the snapshot reflects the current editor state
+      await handleSave();
+      await publishWorkflow.mutateAsync({ id: workflowId });
+      toast({ title: "Workflow publicado", description: "A versão atual está agora ativa para triggers." });
+      queryClient.invalidateQueries({ queryKey: getGetWorkflowQueryKey(workflowId) });
+    } catch {
+      toast({ title: "Erro ao publicar", variant: "destructive" });
+    }
+  };
+
+  const handleUnpublish = async () => {
+    try {
+      await unpublishWorkflow.mutateAsync({ id: workflowId });
+      toast({ title: "Publicação removida" });
+      queryClient.invalidateQueries({ queryKey: getGetWorkflowQueryKey(workflowId) });
+    } catch {
+      toast({ title: "Erro ao despublicar", variant: "destructive" });
     }
   };
 
@@ -515,6 +542,27 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             {workflow?.active
               ? <Badge variant="default" className="text-xs">Active</Badge>
               : <Badge variant="secondary" className="text-xs">Inactive</Badge>}
+            {/* Draft / Published / Draft has changes pill */}
+            {(() => {
+              if (!workflow) return null;
+              const isPublished = !!workflow.publishedAt;
+              const dirty = !!workflow.hasUnpublishedChanges;
+              const cfg = isPublished
+                ? (dirty
+                    ? { color: "#fbbf24", bg: "rgba(251,191,36,0.12)", border: "rgba(251,191,36,0.35)", icon: <GitCommit size={11} />, text: "Draft com alterações" }
+                    : { color: "#22c55e", bg: "rgba(34,197,94,0.12)",  border: "rgba(34,197,94,0.35)",  icon: <Globe2 size={11} />,    text: "Publicado" })
+                : { color: "#94a3b8", bg: "rgba(148,163,184,0.12)", border: "rgba(148,163,184,0.30)", icon: <GitCommit size={11} />, text: "Draft" };
+              return (
+                <div title={isPublished ? `Publicado em ${new Date(workflow.publishedAt!).toLocaleString()}` : "Sem versão publicada"}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600,
+                    color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.border}`,
+                    borderRadius: 6, padding: "3px 8px",
+                  }}>
+                  {cfg.icon} {cfg.text}
+                </div>
+              );
+            })()}
             {!hasTrigger && nodes.length > 0 && (
               <div style={{
                 display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#fbbf24",
@@ -529,6 +577,24 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             <Button variant="ghost" size="sm" onClick={handleSave} disabled={updateWorkflow.isPending}>
               <Save className="h-4 w-4 mr-1.5" /> Salvar
             </Button>
+            {workflow?.publishedAt && !workflow.hasUnpublishedChanges ? (
+              <Button variant="ghost" size="sm" onClick={handleUnpublish}
+                disabled={unpublishWorkflow.isPending}
+                title="Remover versão publicada"
+                style={{ color: "#ef4444" }}>
+                <PinOff className="h-4 w-4 mr-1.5" /> Despublicar
+              </Button>
+            ) : (
+              <Button variant="ghost" size="sm" onClick={handlePublish}
+                disabled={publishWorkflow.isPending || nodes.length === 0}
+                title="Publicar versão atual como ativa"
+                style={{ color: "#22c55e" }}>
+                {publishWorkflow.isPending
+                  ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                  : <Rocket className="h-4 w-4 mr-1.5" />}
+                {workflow?.publishedAt ? "Republicar" : "Publicar"}
+              </Button>
+            )}
             <Button variant="default" size="sm" onClick={handleExecute} disabled={executeWorkflow.isPending}>
               <Play className="h-4 w-4 mr-1.5" /> Executar
             </Button>

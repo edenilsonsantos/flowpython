@@ -35,6 +35,8 @@ export const ListWorkflowsResponseItem = zod.object({
       zod.literal(null),
     ])
     .nullish(),
+  publishedAt: zod.string().nullish(),
+  hasUnpublishedChanges: zod.boolean().optional(),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -80,6 +82,8 @@ export const GetWorkflowResponse = zod
         zod.literal(null),
       ])
       .nullish(),
+    publishedAt: zod.string().nullish(),
+    hasUnpublishedChanges: zod.boolean().optional(),
     createdAt: zod.string(),
     updatedAt: zod.string(),
   })
@@ -243,6 +247,8 @@ export const UpdateWorkflowResponse = zod.object({
       zod.literal(null),
     ])
     .nullish(),
+  publishedAt: zod.string().nullish(),
+  hasUnpublishedChanges: zod.boolean().optional(),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -259,6 +265,77 @@ export const DeleteWorkflowParams = zod.object({
  */
 export const ExecuteWorkflowParams = zod.object({
   id: zod.coerce.string(),
+});
+
+export const ExecuteWorkflowQueryParams = zod.object({
+  source: zod
+    .enum(["draft", "published"])
+    .optional()
+    .describe(
+      "Use 'draft' (default, current editor state) or 'published' (last published snapshot).",
+    ),
+});
+
+/**
+ * @summary Publish current workflow draft as the active version
+ */
+export const PublishWorkflowParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PublishWorkflowResponse = zod.object({
+  id: zod.string(),
+  name: zod.string(),
+  description: zod.string().optional(),
+  active: zod.boolean(),
+  tags: zod.array(zod.string()).optional(),
+  nodeCount: zod.number(),
+  lastExecutedAt: zod.string().nullish(),
+  lastStatus: zod
+    .union([
+      zod.literal("pending"),
+      zod.literal("running"),
+      zod.literal("success"),
+      zod.literal("failed"),
+      zod.literal("stopped"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  publishedAt: zod.string().nullish(),
+  hasUnpublishedChanges: zod.boolean().optional(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * @summary Remove the published version, leaving only the draft
+ */
+export const UnpublishWorkflowParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const UnpublishWorkflowResponse = zod.object({
+  id: zod.string(),
+  name: zod.string(),
+  description: zod.string().optional(),
+  active: zod.boolean(),
+  tags: zod.array(zod.string()).optional(),
+  nodeCount: zod.number(),
+  lastExecutedAt: zod.string().nullish(),
+  lastStatus: zod
+    .union([
+      zod.literal("pending"),
+      zod.literal("running"),
+      zod.literal("success"),
+      zod.literal("failed"),
+      zod.literal("stopped"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  publishedAt: zod.string().nullish(),
+  hasUnpublishedChanges: zod.boolean().optional(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
 });
 
 /**

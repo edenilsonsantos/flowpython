@@ -30,6 +30,8 @@ export interface Workflow {
   nodeCount: number;
   lastExecutedAt?: string | null;
   lastStatus?: WorkflowLastStatus;
+  publishedAt?: string | null;
+  hasUnpublishedChanges?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -379,6 +381,21 @@ export interface InstallPackageBody {
   name: string;
   version?: string;
 }
+
+export type ExecuteWorkflowParams = {
+  /**
+   * Use 'draft' (default, current editor state) or 'published' (last published snapshot).
+   */
+  source?: ExecuteWorkflowSource;
+};
+
+export type ExecuteWorkflowSource =
+  (typeof ExecuteWorkflowSource)[keyof typeof ExecuteWorkflowSource];
+
+export const ExecuteWorkflowSource = {
+  draft: "draft",
+  published: "published",
+} as const;
 
 export type ListExecutionsParams = {
   workflowId?: string;

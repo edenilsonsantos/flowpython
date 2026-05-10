@@ -23,6 +23,7 @@ import type {
   CreateWorkflowBody,
   Credential,
   ExecuteNodeBody,
+  ExecuteWorkflowParams,
   Execution,
   ExecutionDetail,
   ExecutionSummary,
@@ -550,15 +551,31 @@ export const useDeleteWorkflow = <
 /**
  * @summary Trigger a full workflow execution
  */
-export const getExecuteWorkflowUrl = (id: string) => {
-  return `/api/workflows/${id}/execute`;
+export const getExecuteWorkflowUrl = (
+  id: string,
+  params?: ExecuteWorkflowParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/workflows/${id}/execute?${stringifiedParams}`
+    : `/api/workflows/${id}/execute`;
 };
 
 export const executeWorkflow = async (
   id: string,
+  params?: ExecuteWorkflowParams,
   options?: RequestInit,
 ): Promise<Execution> => {
-  return customFetch<Execution>(getExecuteWorkflowUrl(id), {
+  return customFetch<Execution>(getExecuteWorkflowUrl(id, params), {
     ...options,
     method: "POST",
   });
@@ -571,14 +588,14 @@ export const getExecuteWorkflowMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof executeWorkflow>>,
     TError,
-    { id: string },
+    { id: string; params?: ExecuteWorkflowParams },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof executeWorkflow>>,
   TError,
-  { id: string },
+  { id: string; params?: ExecuteWorkflowParams },
   TContext
 > => {
   const mutationKey = ["executeWorkflow"];
@@ -592,11 +609,11 @@ export const getExecuteWorkflowMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof executeWorkflow>>,
-    { id: string }
+    { id: string; params?: ExecuteWorkflowParams }
   > = (props) => {
-    const { id } = props ?? {};
+    const { id, params } = props ?? {};
 
-    return executeWorkflow(id, requestOptions);
+    return executeWorkflow(id, params, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -618,17 +635,185 @@ export const useExecuteWorkflow = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof executeWorkflow>>,
     TError,
-    { id: string },
+    { id: string; params?: ExecuteWorkflowParams },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof executeWorkflow>>,
   TError,
-  { id: string },
+  { id: string; params?: ExecuteWorkflowParams },
   TContext
 > => {
   return useMutation(getExecuteWorkflowMutationOptions(options));
+};
+
+/**
+ * @summary Publish current workflow draft as the active version
+ */
+export const getPublishWorkflowUrl = (id: string) => {
+  return `/api/workflows/${id}/publish`;
+};
+
+export const publishWorkflow = async (
+  id: string,
+  options?: RequestInit,
+): Promise<Workflow> => {
+  return customFetch<Workflow>(getPublishWorkflowUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getPublishWorkflowMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof publishWorkflow>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof publishWorkflow>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["publishWorkflow"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof publishWorkflow>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return publishWorkflow(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PublishWorkflowMutationResult = NonNullable<
+  Awaited<ReturnType<typeof publishWorkflow>>
+>;
+
+export type PublishWorkflowMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Publish current workflow draft as the active version
+ */
+export const usePublishWorkflow = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof publishWorkflow>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof publishWorkflow>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getPublishWorkflowMutationOptions(options));
+};
+
+/**
+ * @summary Remove the published version, leaving only the draft
+ */
+export const getUnpublishWorkflowUrl = (id: string) => {
+  return `/api/workflows/${id}/publish`;
+};
+
+export const unpublishWorkflow = async (
+  id: string,
+  options?: RequestInit,
+): Promise<Workflow> => {
+  return customFetch<Workflow>(getUnpublishWorkflowUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getUnpublishWorkflowMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof unpublishWorkflow>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof unpublishWorkflow>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["unpublishWorkflow"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof unpublishWorkflow>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return unpublishWorkflow(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UnpublishWorkflowMutationResult = NonNullable<
+  Awaited<ReturnType<typeof unpublishWorkflow>>
+>;
+
+export type UnpublishWorkflowMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Remove the published version, leaving only the draft
+ */
+export const useUnpublishWorkflow = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof unpublishWorkflow>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof unpublishWorkflow>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getUnpublishWorkflowMutationOptions(options));
 };
 
 /**

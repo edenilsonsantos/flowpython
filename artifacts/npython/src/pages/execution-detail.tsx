@@ -46,7 +46,8 @@ import { format } from "date-fns";
 import { useStopExecution, getGetExecutionQueryKey } from "@workspace/api-client-react";
 import { DataTableModal, isTabular } from "./data-table-modal";
 import { useQueryClient } from "@tanstack/react-query";
-import { NodeConfigPanel, VarColorCtx } from "@/components/node-config-panel";
+import { NodeConfigPanel, VarColorCtx, type NodeOutputMap } from "@/components/node-config-panel";
+import { NodeDetailModal } from "@/components/node-detail-modal";
 
 const nodeTypes = { custom: CanvasNode };
 
@@ -463,6 +464,39 @@ export default function ExecutionDetail() {
     ? { ...(selectedNode?.config ?? {}), ...(editedConfigs[selectedNodeId] ?? {}) }
     : {};
 
+  // Build NodeOutputMap from this execution's snapshots so the modal's
+  // INPUT/OUTPUT panels and the $('Label').json drag&drop work natively.
+  const lastRunOutputs: NodeOutputMap = (() => {
+    const map: NodeOutputMap = {};
+    if (!debugData) return map;
+    for (const r of debugData.nodeResults) {
+      const snap = r.outputSnapshot as { pipeline?: Record<string, unknown> } | undefined;
+      if (snap?.pipeline) {
+        map[r.nodeId] = {
+          pipeline: snap.pipeline,
+          label: r.nodeLabel,
+          status: r.status,
+          rawOutput: r.output ?? null,
+        };
+      }
+    }
+    return map;
+  })();
+
+  // Wrap selected node into a ReactFlowNode shape consumed by NodeDetailModal.
+  const modalNode: RFNode | null = selectedNode
+    ? {
+        id: selectedNode.id,
+        type: "custom",
+        position: { x: selectedNode.positionX, y: selectedNode.positionY },
+        data: {
+          type: selectedNode.type,
+          label: selectedNode.label,
+          config: currentConfig,
+        },
+      }
+    : null;
+
   const updateConfig = (key: string, value: unknown) => {
     if (!selectedNodeId) return;
     setEditedConfigs((prev) => ({
@@ -635,7 +669,7 @@ export default function ExecutionDetail() {
         </div>
       )}
 
-      {/* ── Body: Canvas + Inspector ── */}
+      {/* ── Body: Canvas (modal opens on node click) ── */}
       <div className="flex flex-1 min-h-0">
         {/* Canvas */}
         <div className="flex-1 min-w-0 relative">
@@ -671,169 +705,44 @@ export default function ExecutionDetail() {
           )}
         </div>
 
-        {/* ── Inspector Panel ── */}
-        {selectedNodeId && selectedNode && (
-          <div className="w-[420px] flex-shrink-0 border-l border-border flex flex-col bg-card overflow-hidden">
-            {/* Node header */}
-            <div className="flex-shrink-0 px-4 py-3 border-b border-border">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Code2 size={15} className="text-primary flex-shrink-0" />
-                  <span className="font-semibold text-sm truncate">{selectedNode.label}</span>
-                  {selectedNodeResult && <StatusBadge status={selectedNodeResult.status} />}
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 flex-shrink-0"
-                  onClick={() => setSelectedNodeId(null)}
-                >
-                  <X size={14} />
-                </Button>
-              </div>
-              <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
-                <span className="font-mono bg-muted px-1.5 py-0.5 rounded">{selectedNode.type}</span>
-                {selectedNodeResult?.durationMs != null && (
-                  <span className="flex items-center gap-1">
-                    <Clock size={10} />
-                    {selectedNodeResult.durationMs < 1000
-                      ? `${selectedNodeResult.durationMs}ms`
-                      : `${(selectedNodeResult.durationMs / 1000).toFixed(2)}s`}
-                  </span>
-                )}
-                {selectedNodeResult?.startedAt && (
-                  <span className="flex items-center gap-1">
-                    <Calendar size={10} />
-                    {format(new Date(selectedNodeResult.startedAt), "HH:mm:ss")}
-                  </span>
-                )}
-                {editMode && editedConfigs[selectedNodeId] && (
-                  <span className="text-amber-400 font-semibold">● Editado</span>
-                )}
-              </div>
-            </div>
-
-            {/* Error display */}
-            {selectedNodeResult?.error && (
-              <div className="flex-shrink-0 mx-3 mt-3 flex items-start gap-2 bg-red-500/10 border border-red-500/25 rounded-lg px-3 py-2 text-xs text-red-400 font-mono">
-                <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
-                <span className="whitespace-pre-wrap break-all">{selectedNodeResult.error}</span>
-              </div>
-            )}
-
-            {/* Tabs */}
-            <Tabs defaultValue="output" className="flex flex-col flex-1 min-h-0">
-              <TabsList className="flex-shrink-0 mx-3 mt-3 mb-0 grid grid-cols-4 h-8">
-                <TabsTrigger value="output" className="text-xs">Saída</TabsTrigger>
-                <TabsTrigger value="input" className="text-xs">Entrada</TabsTrigger>
-                <TabsTrigger value="params" className="text-xs">Parâmetros</TabsTrigger>
-                <TabsTrigger value="logs" className="text-xs">
-                  Logs {selectedNodeLogs.length > 0 && `(${selectedNodeLogs.length})`}
-                </TabsTrigger>
-              </TabsList>
-
-              {/* OUTPUT tab */}
-              <TabsContent value="output" className="flex-1 overflow-y-auto px-3 pb-3 mt-2 space-y-3">
-                {selectedNodeResult?.output ? (
-                  <div className="rounded-lg border border-border/40 overflow-hidden">
-                    <div className="px-3 py-1.5 bg-muted/30 border-b border-border/40 text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                      Resultado da execução
-                    </div>
-                    <pre className="p-3 text-xs font-mono bg-[#0d1117] text-emerald-300 whitespace-pre-wrap break-all max-h-48 overflow-auto">
-                      {selectedNodeResult.output}
-                    </pre>
-                  </div>
-                ) : selectedNodeResult?.status === "failed" ? (
-                  <div className="text-xs text-muted-foreground italic text-center py-4">Sem saída — nodo falhou.</div>
-                ) : selectedNodeResult?.status === "pending" || selectedNodeResult?.status === "skipped" ? (
-                  <div className="text-xs text-muted-foreground italic text-center py-4">Nodo não executado.</div>
-                ) : null}
-
-                {selectedNodeResult?.outputSnapshot !== undefined && (
-                  <>
-                    <PipelineVarsViewer
-                      snapshot={selectedNodeResult.outputSnapshot as Record<string, unknown>}
-                      title="Variáveis do pipeline após execução"
-                      onPreviewTable={(varName, data) => setTablePreview({ varName, data })}
-                    />
-                    <JsonViewer data={selectedNodeResult.outputSnapshot} title="JSON completo (pipeline + workflow)" />
-                  </>
-                )}
-              </TabsContent>
-
-              {/* INPUT tab */}
-              <TabsContent value="input" className="flex-1 overflow-y-auto px-3 pb-3 mt-2 space-y-3">
-                {selectedNodeResult?.inputSnapshot !== undefined ? (
-                  <>
-                    <PipelineVarsViewer
-                      snapshot={selectedNodeResult.inputSnapshot as Record<string, unknown>}
-                      title="Variáveis do pipeline antes da execução"
-                      onPreviewTable={(varName, data) => setTablePreview({ varName, data })}
-                    />
-                    <JsonViewer data={selectedNodeResult.inputSnapshot} title="JSON completo (pipeline + workflow)" />
-                  </>
-                ) : (
-                  <div className="text-xs text-muted-foreground italic text-center py-6">
-                    Snapshot de entrada não disponível.<br />
-                    <span className="text-[11px]">Execute o workflow novamente para capturar dados.</span>
-                  </div>
-                )}
-              </TabsContent>
-
-              {/* PARAMS tab */}
-              <TabsContent value="params" className="flex-1 overflow-y-auto px-3 pb-3 mt-2">
-                {!editMode && (
-                  <div className="mb-3 flex items-center gap-2 px-2 py-1.5 rounded bg-muted/30 border border-border/40 text-[11px] text-muted-foreground">
-                    <Wrench size={11} />
-                    Ative o <strong className="mx-1">Modo Edição</strong> no topo para modificar a configuração.
-                  </div>
-                )}
-                <VarColorCtx.Provider value={{}}>
-                  <NodeConfigPanel
-                    node={{
-                      id: selectedNode.id,
-                      type: "custom",
-                      position: { x: 0, y: 0 },
-                      data: {
-                        type: selectedNode.type,
-                        label: selectedNode.label,
-                        config: currentConfig,
-                      },
-                    }}
-                    workflowId={debugData?.workflowId ?? ""}
-                    onUpdateData={(k, v) => {
-                      if (k === "label") updateConfig("__label__", v);
-                    }}
-                    onUpdateConfig={(k, v) => editMode && updateConfig(k, v)}
-                    onTestNode={() => {}}
-                    testLoading={false}
-                    testResult={null}
-                  />
-                </VarColorCtx.Provider>
-              </TabsContent>
-
-              {/* LOGS tab */}
-              <TabsContent value="logs" className="flex-1 overflow-y-auto px-3 pb-3 mt-2">
-                <div className="rounded-lg border border-border/40 overflow-hidden">
-                  <div className="px-3 py-1.5 bg-[#161b22] border-b border-border/30 flex items-center gap-2">
-                    <Terminal size={12} className="text-muted-foreground" />
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                      Log lines — {selectedNode.label}
-                    </span>
-                  </div>
-                  <div className="bg-[#0d1117] p-3 max-h-96 overflow-y-auto">
-                    {selectedNodeLogs.length === 0 ? (
-                      <span className="text-xs text-slate-600 italic">Sem logs para este nodo.</span>
-                    ) : (
-                      selectedNodeLogs.map((log) => <LogLine key={log.id} log={log} />)
-                    )}
-                  </div>
-                </div>
-              </TabsContent>
-            </Tabs>
-          </div>
-        )}
       </div>
+
+      {/* ── Detail modal (3-col INPUT / CONFIG / OUTPUT, $('Label').json drag&drop) ── */}
+      <NodeDetailModal
+        open={!!selectedNodeId && !!modalNode}
+        onClose={() => setSelectedNodeId(null)}
+        node={modalNode}
+        workflowId={debugData?.workflowId ?? ""}
+        nodes={rfNodes}
+        edges={rfEdges}
+        lastRunOutputs={lastRunOutputs}
+        onUpdateData={(k, v) => {
+          if (!editMode) return;
+          if (k === "label") updateConfig("__label__", v);
+        }}
+        onUpdateConfig={(k, v) => { if (editMode) updateConfig(k, v); }}
+        onTestNode={() => {
+          toast({
+            title: "Execução de nodo individual indisponível aqui",
+            description: "Abra o workflow para testar nodos isoladamente.",
+          });
+        }}
+        testLoading={false}
+        testResult={
+          selectedNodeResult
+            ? {
+                output: selectedNodeResult.output ?? "",
+                success: selectedNodeResult.status === "success",
+                durationMs: selectedNodeResult.durationMs ?? 0,
+                pipeline:
+                  (selectedNodeResult.outputSnapshot as { pipeline?: Record<string, unknown> } | undefined)
+                    ?.pipeline ?? null,
+              }
+            : null
+        }
+        onRefreshOutputs={() => loadDebugData()}
+        nodeLogs={selectedNodeLogs}
+      />
 
       {/* ── Global logs drawer (bottom, always visible) ── */}
       <GlobalLogs logs={debugData.logs.filter((l) => !l.nodeId)} />

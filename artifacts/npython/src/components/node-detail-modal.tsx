@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Node as ReactFlowNode, Edge as ReactFlowEdge } from "reactflow";
-import { X, Search, Play, Loader2, ChevronRight, ChevronDown, Info, AlertTriangle } from "lucide-react";
+import { X, Search, Play, Loader2, ChevronRight, ChevronDown, Info, AlertTriangle, Pin, PinOff } from "lucide-react";
 import {
   NodeConfigPanel,
   NodeOutputMap,
@@ -486,6 +486,7 @@ function OutputPanel({
 export function NodeDetailModal({
   open, onClose, node, workflowId, nodes, edges, lastRunOutputs,
   onUpdateData, onUpdateConfig, onTestNode, testLoading, testResult, onRefreshOutputs,
+  nodeLogs,
 }: {
   open: boolean;
   onClose: () => void;
@@ -500,6 +501,8 @@ export function NodeDetailModal({
   testLoading: boolean;
   testResult: { output: string; success: boolean; durationMs: number; pipeline?: Record<string, unknown> | null } | null;
   onRefreshOutputs: () => void;
+  /** Optional per-node execution logs (rendered below OUTPUT). Used in the executions debugger. */
+  nodeLogs?: { id: string; level: string; message: string; timestamp: string }[];
 }) {
   const { toast } = useToast();
   const [inputMode, setInputMode] = useState<ViewMode>("schema");
@@ -733,6 +736,48 @@ export function NodeDetailModal({
                       <AlertTriangle size={11} /> erro
                     </span>
                   )}
+                  {(() => {
+                    const cfg = (node.data.config as Record<string, unknown>) ?? {};
+                    const isPinned = cfg.pinned === true;
+                    const lastOut = lastRunOutputs[node.id]?.pipeline;
+                    const canPin = !isPinned && !!lastOut && Object.keys(lastOut).length > 0;
+                    return isPinned ? (
+                      <button
+                        onClick={() => { onUpdateConfig("pinned", false); toast({ title: "Pin removido" }); }}
+                        title="Remover pin (volta a executar normalmente)"
+                        style={{
+                          display: "flex", alignItems: "center", gap: 4,
+                          fontSize: 10, fontWeight: 700, color: "#f59e0b",
+                          background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.4)",
+                          borderRadius: 4, padding: "2px 7px", cursor: "pointer",
+                        }}
+                      >
+                        <PinOff size={10} /> PINNED
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          if (!canPin) { toast({ title: "Sem dados", description: "Execute o nodo antes de fixar o output.", variant: "destructive" }); return; }
+                          onUpdateConfig("pinnedData", lastOut);
+                          onUpdateConfig("pinned", true);
+                          toast({ title: "Output fixado", description: "Próximas execuções usarão estes dados mockados." });
+                        }}
+                        title="Fixar dados atuais como output mockado"
+                        disabled={!canPin}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 4,
+                          fontSize: 10, fontWeight: 600,
+                          color: canPin ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
+                          background: "transparent",
+                          border: "1px solid hsl(var(--border))",
+                          borderRadius: 4, padding: "2px 7px",
+                          cursor: canPin ? "pointer" : "not-allowed", opacity: canPin ? 1 : 0.5,
+                        }}
+                      >
+                        <Pin size={10} /> Fixar
+                      </button>
+                    );
+                  })()}
                   <span style={{ flex: 1 }} />
                   <DataTabs mode={outputMode} onChange={setOutputMode} side="output" />
                 </div>
@@ -759,6 +804,41 @@ export function NodeDetailModal({
                   query={outputQuery}
                   onInsert={handleInsert}
                 />
+                {nodeLogs && nodeLogs.length > 0 && (
+                  <div style={{ borderTop: "1px solid hsl(var(--border))", marginTop: 8 }}>
+                    <div style={{
+                      padding: "8px 14px 4px",
+                      fontSize: 10, fontWeight: 800, letterSpacing: "0.12em",
+                      color: "#94a3b8", display: "flex", alignItems: "center", gap: 6,
+                    }}>
+                      LOGS DO NODO ({nodeLogs.length})
+                    </div>
+                    <div style={{
+                      padding: "4px 14px 12px", fontSize: 11, fontFamily: "monospace",
+                      maxHeight: 240, overflowY: "auto",
+                    }}>
+                      {nodeLogs.map((log) => {
+                        const color =
+                          log.level === "error" ? "#ef4444" :
+                          log.level === "warn"  ? "#fbbf24" : "#94a3b8";
+                        return (
+                          <div key={log.id} style={{
+                            display: "flex", gap: 8, padding: "3px 0",
+                            borderBottom: "1px solid rgba(255,255,255,0.04)",
+                            color, lineHeight: 1.45,
+                          }}>
+                            <span style={{ color: "#64748b", flexShrink: 0, fontSize: 10 }}>
+                              {new Date(log.timestamp).toLocaleTimeString()}
+                            </span>
+                            <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", flex: 1 }}>
+                              {log.message}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
