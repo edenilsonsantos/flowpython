@@ -54,7 +54,7 @@ import { CanvasNode } from "@/components/canvas-node";
 import { EdgeWithDelete } from "@/components/edge-with-delete";
 import { NodePalette } from "@/components/node-palette";
 import { NodeDetailModal } from "@/components/node-detail-modal";
-import { NodeDef, NODE_DEFINITIONS, getNodeDef, isTriggerType, isDatabaseNodeType, parseDbNodeType, DB_META, DB_OP_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
+import { NodeDef, NODE_DEFINITIONS, getNodeDef, getNodeOutputHandles, isTriggerType, isDatabaseNodeType, parseDbNodeType, DB_META, DB_OP_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
 import { pythonLibraryCompletionSource } from "@/lib/python-completions";
 import { copilotExtension } from "@/lib/copilot-extension";
 import { QuickConnectCtx } from "@/components/quick-connect-popup";
@@ -163,16 +163,29 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     if (!workflow || initRef.current) return;
     initRef.current = true;
 
-    const baseEdges = (workflow.edges || []).map((e) => ({
-      id: e.id,
-      type: "custom",
-      source: e.sourceNodeId,
-      target: e.targetNodeId,
-      sourceHandle: e.sourceHandle ?? undefined,
-      label: e.label ?? undefined,
-      animated: true,
-      style: { stroke: "hsl(var(--primary))", strokeWidth: 2 },
-    }));
+    // Color edges leaving a branching node by their source handle so users
+    // can visually distinguish which output (true/false/case/etc) each edge
+    // came from. Non-branching edges keep the default primary color.
+    const nodeById = new Map((workflow.nodes ?? []).map((n) => [n.id, n]));
+    const baseEdges = (workflow.edges || []).map((e) => {
+      const src = nodeById.get(e.sourceNodeId);
+      let stroke = "hsl(var(--primary))";
+      if (src && e.sourceHandle) {
+        const handles = getNodeOutputHandles(src.type as string, (src.config as Record<string, unknown>) ?? {});
+        const h = handles.find((x) => x.id === e.sourceHandle);
+        if (h && handles.length > 1) stroke = h.color;
+      }
+      return {
+        id: e.id,
+        type: "custom",
+        source: e.sourceNodeId,
+        target: e.targetNodeId,
+        sourceHandle: e.sourceHandle ?? undefined,
+        label: e.label ?? undefined,
+        animated: true,
+        style: { stroke, strokeWidth: 2 },
+      };
+    });
     const baseNodes = (workflow.nodes || []).map((n) => ({
       id: n.id,
       type: "custom" as const,

@@ -1258,18 +1258,27 @@ async function runWorkflow({
           await addLog(executionId, node.id, "info", `[PINNED] usando dados mockados`);
 
           // For branching nodes, derive the outcome from pinned data so downstream
-          // gating still works. Falls back to "true"/"if"/fallback when missing.
+          // gating still works. Also write the standard pipeline keys
+          // (_condition_result / _branch / _switch_result) so the snapshot
+          // captures which output handle "won" — debugger uses that to
+          // highlight the chosen path in green.
           if (BRANCH_TYPES.has(node.type)) {
             const pd = (pinnedData as Record<string, unknown>) ?? {};
             if (node.type === "if_and") {
               const r = pd["_condition_result"];
-              branchOutcome.set(node.id, (r === true || r === "true") ? "true" : "false");
+              const truthy = (r === true || r === "true");
+              branchOutcome.set(node.id, truthy ? "true" : "false");
+              pipelineContext["_condition_result"] = truthy;
             } else if (node.type === "if_else") {
               const b = pd["_branch"];
-              branchOutcome.set(node.id, typeof b === "string" ? b : ((nodeConfig.elseBranch as string) ?? "else"));
+              const chosen = typeof b === "string" ? b : ((nodeConfig.elseBranch as string) ?? "else");
+              branchOutcome.set(node.id, chosen);
+              pipelineContext["_branch"] = chosen;
             } else {
               const r = pd["_switch_result"];
-              branchOutcome.set(node.id, typeof r === "string" ? r : ((nodeConfig.fallback as string) ?? "default"));
+              const chosen = typeof r === "string" ? r : ((nodeConfig.fallback as string) ?? "default");
+              branchOutcome.set(node.id, chosen);
+              pipelineContext["_switch_result"] = chosen;
             }
           }
         } else if (node.type === "code") {

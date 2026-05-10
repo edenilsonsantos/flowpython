@@ -78,6 +78,7 @@ interface DebugEdge {
   id: string;
   sourceNodeId: string;
   targetNodeId: string;
+  sourceHandle?: string | null;
   label?: string;
   condition?: string;
 }
@@ -439,17 +440,56 @@ export default function ExecutionDetail() {
         })
       );
 
+      // Build a per-source map of { nodeId → chosenHandle } so we can color
+      // the edge that took the chosen path in green and dim the others.
+      const chosenBySource = new Map<string, string>();
+      for (const n of data.nodes) {
+        const snap = nodeResultsMap[n.id]?.outputSnapshot as
+          { pipeline?: Record<string, unknown> } | undefined;
+        const pl = snap?.pipeline ?? {};
+        if (n.type === "if_and") {
+          const r = pl["_condition_result"];
+          if (r !== undefined) chosenBySource.set(n.id, (r === true || r === "true") ? "true" : "false");
+        } else if (n.type === "if_else") {
+          const b = pl["_branch"];
+          if (typeof b === "string") chosenBySource.set(n.id, b);
+        } else if (n.type === "case" || n.type === "switch") {
+          const r = pl["_switch_result"];
+          if (typeof r === "string") chosenBySource.set(n.id, r);
+        }
+      }
+
       setRfEdges(
-        data.edges.map((e) => ({
-          id: e.id,
-          source: e.sourceNodeId,
-          target: e.targetNodeId,
-          label: e.label ?? undefined,
-          type: "smoothstep",
-          style: { stroke: "#475569", strokeWidth: 2 },
-          labelStyle: { fill: "#94a3b8", fontSize: 10 },
-          labelBgStyle: { fill: "hsl(var(--card))", fillOpacity: 0.9 },
-        }))
+        data.edges.map((e) => {
+          const chosen = chosenBySource.get(e.sourceNodeId);
+          let stroke = "#475569";
+          let strokeWidth = 2;
+          let strokeDasharray: string | undefined;
+          let animated = false;
+          if (chosen !== undefined && e.sourceHandle) {
+            if (e.sourceHandle === chosen) {
+              stroke = "#22c55e"; // green for the chosen branch
+              strokeWidth = 2.5;
+              animated = true;
+            } else {
+              stroke = "#334155"; // very dim for skipped branches
+              strokeWidth = 1.5;
+              strokeDasharray = "4 4";
+            }
+          }
+          return {
+            id: e.id,
+            source: e.sourceNodeId,
+            target: e.targetNodeId,
+            sourceHandle: e.sourceHandle ?? undefined,
+            label: e.label ?? undefined,
+            type: "smoothstep",
+            animated,
+            style: { stroke, strokeWidth, strokeDasharray },
+            labelStyle: { fill: "#94a3b8", fontSize: 10 },
+            labelBgStyle: { fill: "hsl(var(--card))", fillOpacity: 0.9 },
+          };
+        })
       );
 
       return data;
