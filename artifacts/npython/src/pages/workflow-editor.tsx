@@ -168,6 +168,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       type: "custom",
       source: e.sourceNodeId,
       target: e.targetNodeId,
+      sourceHandle: e.sourceHandle ?? undefined,
       label: e.label ?? undefined,
       animated: true,
       style: { stroke: "hsl(var(--primary))", strokeWidth: 2 },
@@ -332,6 +333,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       id: e.id,
       sourceNodeId: e.source,
       targetNodeId: e.target,
+      sourceHandle: (e.sourceHandle as string | undefined) ?? null,
       label: e.label as string,
       condition: null,
     }));

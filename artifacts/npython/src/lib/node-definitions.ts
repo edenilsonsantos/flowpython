@@ -13,6 +13,69 @@ export interface NodeDef {
   hasOutput: boolean;
 }
 
+export interface OutputHandle {
+  id: string;
+  label: string;
+  color: string;
+}
+
+/**
+ * Returns the list of output handles for a node based on its type and config.
+ * Branching nodes expose multiple handles (one per branch); regular nodes
+ * return a single default handle (id "out") so existing single-output behaviour
+ * is preserved.
+ */
+export function getNodeOutputHandles(
+  type: string,
+  config: Record<string, unknown>,
+): OutputHandle[] {
+  const TRUE_FALSE: OutputHandle[] = [
+    { id: "true",  label: "true",  color: "#22c55e" },
+    { id: "false", label: "false", color: "#ef4444" },
+  ];
+
+  if (type === "condition" || type === "if_and") return TRUE_FALSE;
+
+  if (type === "if_else") {
+    const elif = (config.elifClauses as Array<{ branch: string }> | undefined) ?? [];
+    const elseBranch = (config.elseBranch as string) ?? "else";
+    const handles: OutputHandle[] = [{ id: "if", label: "if", color: "#22c55e" }];
+    elif.forEach((c, i) =>
+      handles.push({ id: c.branch || `elif_${i + 1}`, label: c.branch || `elif_${i + 1}`, color: "#a78bfa" }),
+    );
+    handles.push({ id: elseBranch || "else", label: elseBranch || "else", color: "#ef4444" });
+    return handles;
+  }
+
+  if (type === "case") {
+    const cases = (config.cases as Array<{ label: string }> | undefined) ?? [];
+    const fallback = (config.fallback as string) ?? "default";
+    const handles: OutputHandle[] = cases.map((c, i) => ({
+      id: c.label || `case${i + 1}`,
+      label: c.label || `case${i + 1}`,
+      color: "#a78bfa",
+    }));
+    handles.push({ id: fallback || "default", label: fallback || "default", color: "#94a3b8" });
+    return handles;
+  }
+
+  if (type === "switch") {
+    const conds = (config.conditions as Array<{ label: string }> | undefined) ?? [];
+    const fallback = (config.fallback as string) ?? "default";
+    const handles: OutputHandle[] = conds.map((c, i) => ({
+      id: c.label || `branch${i + 1}`,
+      label: c.label || `branch${i + 1}`,
+      color: "#e879f9",
+    }));
+    handles.push({ id: fallback || "default", label: fallback || "default", color: "#94a3b8" });
+    return handles;
+  }
+
+  return [{ id: "out", label: "", color: "#94a3b8" }];
+}
+
+export const BRANCHING_NODE_TYPES = new Set(["condition", "if_and", "if_else", "case", "switch"]);
+
 export const NODE_CATEGORY_META: Record<NodeCategory, { label: string; color: string; bg: string }> = {
   trigger:    { label: "Trigger",       color: "#14b8a6", bg: "rgba(20,184,166,0.12)"  },
   logic:      { label: "Logic",         color: "#a78bfa", bg: "rgba(167,139,250,0.12)" },

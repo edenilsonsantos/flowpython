@@ -132,6 +132,7 @@ router.get("/workflows/:id", async (req, res) => {
         id: e.id,
         sourceNodeId: e.sourceNodeId,
         targetNodeId: e.targetNodeId,
+        sourceHandle: e.sourceHandle ?? undefined,
         label: e.label ?? undefined,
         condition: e.condition ?? undefined,
       })),
@@ -193,6 +194,7 @@ router.put("/workflows/:id", async (req, res) => {
             workflowId: id,
             sourceNodeId: e.sourceNodeId,
             targetNodeId: e.targetNodeId,
+            sourceHandle: e.sourceHandle ?? null,
             label: e.label ?? null,
             condition: e.condition ?? null,
           }))
@@ -244,7 +246,7 @@ router.post("/workflows/:id/publish", async (req, res) => {
       })),
       edges: edges.map((e) => ({
         id: e.id, sourceNodeId: e.sourceNodeId, targetNodeId: e.targetNodeId,
-        label: e.label, condition: e.condition,
+        sourceHandle: e.sourceHandle, label: e.label, condition: e.condition,
       })),
     };
 

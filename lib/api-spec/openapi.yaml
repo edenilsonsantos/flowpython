@@ -813,6 +813,9 @@ components:
           type: string
         targetNodeId:
           type: string
+        sourceHandle:
+          type: string
+          nullable: true
         label:
           type: string
           nullable: true

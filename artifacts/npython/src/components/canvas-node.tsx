@@ -8,7 +8,7 @@ import {
   FileUp, FileDown, Binary, CheckCircle2, LayoutList,
   LucideProps,
 } from "lucide-react";
-import { getNodeDef, VARIABLE_SCOPES } from "@/lib/node-definitions";
+import { getNodeDef, VARIABLE_SCOPES, getNodeOutputHandles } from "@/lib/node-definitions";
 import { QuickConnectCtx, QuickConnectPopup } from "@/components/quick-connect-popup";
 
 const ICON_MAP: Record<string, React.FC<LucideProps>> = {
@@ -184,17 +184,44 @@ export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps
             }}
           />
         )}
-        {hasOutput && (
-          <>
-            <Handle
-              type="source"
-              position={Position.Right}
-              isConnectable={isConnectable}
-              style={{
-                background: color, border: "2px solid hsl(var(--background))",
-                width: HANDLE_SIZE, height: HANDLE_SIZE, right: -HANDLE_SIZE / 2 - 1,
-              }}
-            />
+        {hasOutput && (() => {
+          const handles = getNodeOutputHandles(data.type as string, cfg);
+          const isMulti = handles.length > 1;
+          return (
+            <>
+              {handles.map((h, i) => {
+                // Distribute handles evenly down the right side of the body
+                const topPct = isMulti
+                  ? `${((i + 1) / (handles.length + 1)) * 100}%`
+                  : "50%";
+                return (
+                  <div key={h.id} style={{ position: "absolute", top: topPct, right: 0, transform: "translateY(-50%)" }}>
+                    <Handle
+                      id={h.id}
+                      type="source"
+                      position={Position.Right}
+                      isConnectable={isConnectable}
+                      style={{
+                        background: h.color, border: "2px solid hsl(var(--background))",
+                        width: HANDLE_SIZE, height: HANDLE_SIZE,
+                        right: -HANDLE_SIZE / 2 - 1,
+                        position: "absolute", top: "50%", transform: "translateY(-50%)",
+                      }}
+                    />
+                    {isMulti && (
+                      <span style={{
+                        position: "absolute",
+                        left: HANDLE_SIZE / 2 + 6, top: "50%", transform: "translateY(-50%)",
+                        fontSize: 9, fontWeight: 600, color: h.color,
+                        whiteSpace: "nowrap", pointerEvents: "none",
+                        textShadow: "0 1px 2px rgba(0,0,0,0.6)",
+                      }}>
+                        {h.label}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
 
             {/* Quick-connect button on hover, to the right of the source handle */}
             <button
@@ -219,7 +246,8 @@ export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps
               <Link2 size={11} color="white" strokeWidth={2.5} />
             </button>
           </>
-        )}
+          );
+        })()}
       </div>
 
       {/* ── Label below the body ───────────────────────────── */}

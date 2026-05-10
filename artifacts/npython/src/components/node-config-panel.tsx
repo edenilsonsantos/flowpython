@@ -968,15 +968,6 @@ function IfAndNodeConfig({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <Field label="Operador lógico">
-        <Select value={mode} onValueChange={(v) => onUpdateConfig("mode", v)}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="and">AND — todas devem ser verdadeiras</SelectItem>
-            <SelectItem value="or">OR — basta uma ser verdadeira</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
       <div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
           <label style={{ fontSize: 12, fontWeight: 500 }}>Condições ({conditions.length})</label>
@@ -988,23 +979,41 @@ function IfAndNodeConfig({
           <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", textAlign: "center", padding: "10px 0" }}>Nenhuma condição adicionada</div>
         )}
         {conditions.map((cond, idx) => (
-          <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-            <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", minWidth: 32, textAlign: "right", flexShrink: 0 }}>
-              {idx === 0 ? "SE" : mode.toUpperCase()}
+          <div key={idx}>
+            {/* AND/OR connector between every pair (n8n-style) */}
+            {idx > 0 && (
+              <div style={{ display: "flex", justifyContent: "center", margin: "4px 0" }}>
+                <Select value={mode} onValueChange={(v) => onUpdateConfig("mode", v)}>
+                  <SelectTrigger style={{ height: 24, width: 80, fontSize: 11, padding: "0 8px" }}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="and">AND</SelectItem>
+                    <SelectItem value="or">OR</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+              <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", minWidth: 28, textAlign: "right", flexShrink: 0 }}>
+                {idx === 0 ? "SE" : ""}
+              </div>
+              <VarTokenInput
+                value={cond.expression}
+                onChange={(v) => update(idx, v)}
+                placeholder="len(lista) > 0"
+                style={{ flex: 1 }}
+              />
+              <Button size="icon" variant="ghost" onClick={() => remove(idx)} style={{ height: 28, width: 28, flexShrink: 0 }}>
+                <Trash2 size={12} />
+              </Button>
             </div>
-            <VarTokenInput
-              value={cond.expression}
-              onChange={(v) => update(idx, v)}
-              placeholder="len(lista) > 0"
-              style={{ flex: 1 }}
-            />
-            <Button size="icon" variant="ghost" onClick={() => remove(idx)} style={{ height: 28, width: 28, flexShrink: 0 }}>
-              <Trash2 size={12} />
-            </Button>
           </div>
         ))}
       </div>
-      <InfoBox>O resultado fica em <code>_condition_result</code> (True/False) no pipeline para uso em nodos downstream.</InfoBox>
+      <InfoBox>
+        Combinação <strong>{mode.toUpperCase()}</strong>. Saídas <span style={{ color: "#22c55e" }}>true</span> e <span style={{ color: "#ef4444" }}>false</span> roteiam nodos downstream conforme o resultado.
+      </InfoBox>
     </div>
   );
 }

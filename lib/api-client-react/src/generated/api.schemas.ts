@@ -86,6 +86,7 @@ export interface Edge {
   id: string;
   sourceNodeId: string;
   targetNodeId: string;
+  sourceHandle?: string | null;
   label?: string | null;
   condition?: EdgeCondition;
 }

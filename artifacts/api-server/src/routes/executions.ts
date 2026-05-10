@@ -803,6 +803,7 @@ router.post("/workflows/:id/execute", async (req, res) => {
       edges = (snap.edges ?? []).map((e: any) => ({
         id: e.id, workflowId,
         sourceNodeId: e.sourceNodeId, targetNodeId: e.targetNodeId,
+        sourceHandle: e.sourceHandle ?? null,
         label: e.label ?? null, condition: e.condition ?? null,
       }));
     } else {
@@ -1147,6 +1148,53 @@ async function runWorkflow({
 
     const venovsDir = process.env.NPYTHON_VENVS_DIR ?? "/tmp/npython-venvs";
 
+    // ── Branch routing state ───────────────────────────────────────
+    // For branching nodes (condition / if_and / if_else / case / switch),
+    // record which output handle "won" so we only follow matching edges.
+    const branchOutcome = new Map<string, string>();
+    const BRANCH_TYPES = new Set(["condition", "if_and", "if_else", "case", "switch"]);
+    const skippedNodes = new Set<string>();
+
+    // Build outgoing-edge map (with sourceHandle) so we can prune downstream.
+    const outgoingEdges = new Map<string, Array<{ targetId: string; handle: string | null }>>();
+    for (const node of reachableNodes) outgoingEdges.set(node.id, []);
+    for (const edge of edges) {
+      if (!reachable.has(edge.sourceNodeId) || !reachable.has(edge.targetNodeId)) continue;
+      const arr = outgoingEdges.get(edge.sourceNodeId) ?? [];
+      arr.push({ targetId: edge.targetNodeId, handle: (edge.sourceHandle as string | null) ?? null });
+      outgoingEdges.set(edge.sourceNodeId, arr);
+    }
+
+    // True if at least one incoming edge to `nodeId` is currently "active":
+    //   - parent must not be skipped/failed
+    //   - if parent is a branching node, the edge's sourceHandle must equal the chosen outcome
+    //     (an edge with no sourceHandle on a branching parent is treated as inactive
+    //     once the parent has chosen — to avoid silently routing both branches)
+    const hasActiveIncoming = (nodeId: string): boolean => {
+      const incoming = incomingMap.get(nodeId) ?? [];
+      if (incoming.length === 0) return true; // root / trigger
+      for (const parentId of incoming) {
+        if (skippedNodes.has(parentId)) continue;
+        const pr = nodeResults[parentId];
+        if (!pr || pr.status === "failed") continue;
+        // Find all edges from parent → this node
+        const edgesFromParent = (outgoingEdges.get(parentId) ?? []).filter((e) => e.targetId === nodeId);
+        const parentNode = reachableNodes.find((n) => n.id === parentId);
+        const parentIsBranching = parentNode && BRANCH_TYPES.has(parentNode.type);
+        if (parentIsBranching) {
+          const chosen = branchOutcome.get(parentId);
+          if (chosen === undefined) continue; // parent ran but didn't record (shouldn't happen)
+          // Active if any edge has sourceHandle === chosen.
+          // Edges with null handle are treated as a fallback only when no edge for `chosen` exists at all.
+          if (edgesFromParent.some((e) => e.handle === chosen)) return true;
+          if (edgesFromParent.every((e) => e.handle === null)) return true; // back-compat: untyped edges still flow
+        } else {
+          return true;
+        }
+      }
+      return false;
+    };
+
     for (const node of sorted) {
       // Check if execution was stopped
       const [currentExec] = await db.select().from(executionsTable).where(eq(executionsTable.id, executionId));
@@ -1156,6 +1204,20 @@ async function runWorkflow({
       }
 
       if (globalError) break;
+
+      // ── Branch gating: skip nodes only reachable via non-chosen branches ──
+      const isTrigger = String(node.type).startsWith("trigger_");
+      if (!isTrigger && !hasActiveIncoming(node.id)) {
+        skippedNodes.add(node.id);
+        nodeResults[node.id].status = "skipped";
+        nodeResults[node.id].finishedAt = new Date().toISOString();
+        nodeResults[node.id].output = "(pulado — ramo não selecionado)";
+        await addLog(executionId, node.id, "info", `[skip] "${node.label}" — ramo não selecionado`);
+        await db.update(executionsTable)
+          .set({ nodeResults: Object.values(nodeResults) })
+          .where(eq(executionsTable.id, executionId));
+        continue;
+      }
 
       const nodeStart = Date.now();
       nodeResults[node.id].status = "running";
@@ -1194,6 +1256,22 @@ async function runWorkflow({
           }
           success = true;
           await addLog(executionId, node.id, "info", `[PINNED] usando dados mockados`);
+
+          // For branching nodes, derive the outcome from pinned data so downstream
+          // gating still works. Falls back to "true"/"if"/fallback when missing.
+          if (BRANCH_TYPES.has(node.type)) {
+            const pd = (pinnedData as Record<string, unknown>) ?? {};
+            if (node.type === "condition" || node.type === "if_and") {
+              const r = pd["_condition_result"];
+              branchOutcome.set(node.id, (r === true || r === "true") ? "true" : "false");
+            } else if (node.type === "if_else") {
+              const b = pd["_branch"];
+              branchOutcome.set(node.id, typeof b === "string" ? b : ((nodeConfig.elseBranch as string) ?? "else"));
+            } else {
+              const r = pd["_switch_result"];
+              branchOutcome.set(node.id, typeof r === "string" ? r : ((nodeConfig.fallback as string) ?? "default"));
+            }
+          }
         } else if (node.type === "code") {
           const config = node.config as Record<string, unknown>;
           const userCode = (config.code as string) ?? "";
@@ -1425,6 +1503,7 @@ async function runWorkflow({
           });
           await fs.rm(tmpDir, { recursive: true, force: true });
           pipelineContext["_condition_result"] = condResult.result;
+          branchOutcome.set(node.id, condResult.result ? "true" : "false");
           success = true;
           output = `Condition "${expression}" → ${condResult.result}`;
           if (condResult.err) output += ` ⚠ ${condResult.err}`;
@@ -1477,6 +1556,7 @@ async function runWorkflow({
           });
           await fs.rm(tmpDir, { recursive: true, force: true });
           pipelineContext["_condition_result"] = ifAndResult.result;
+          branchOutcome.set(node.id, ifAndResult.result ? "true" : "false");
           success = true;
           const modeLabel = mode === "or" ? "OR" : "AND";
           output = `[if_${modeLabel}] ${conditions.length} condições → ${ifAndResult.result} (${ifAndResult.results.map(String).join(`, ${modeLabel} `)})`;
@@ -1535,6 +1615,7 @@ async function runWorkflow({
           });
           await fs.rm(tmpDir, { recursive: true, force: true });
           pipelineContext["_branch"] = ifElseResult.branch;
+          branchOutcome.set(node.id, ifElseResult.branch);
           success = true;
           output = `[if_else] → branch "${ifElseResult.branch}"`;
           if (ifElseResult.err) output += ` ⚠ ${ifElseResult.err}`;
@@ -1576,6 +1657,7 @@ async function runWorkflow({
           });
           await fs.unlink(tmpScript).catch(() => {});
           pipelineContext["_switch_result"] = caseResult;
+          branchOutcome.set(node.id, caseResult);
           success = true;
           output = `[case] "${inputVar}" = ${valueJson} → "${caseResult}"`;
           await addLog(executionId, node.id, "info", output);
@@ -1825,6 +1907,7 @@ async function runWorkflow({
           });
           await fs.unlink(tmpScript).catch(() => {});
           pipelineContext["_switch_result"] = switchResult;
+          branchOutcome.set(node.id, switchResult);
           output = `Branch: "${switchResult}" (input: ${valueJson})`;
           success = true;
           await addLog(executionId, node.id, "info", output);

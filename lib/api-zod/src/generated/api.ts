@@ -136,6 +136,7 @@ export const GetWorkflowResponse = zod
             id: zod.string(),
             sourceNodeId: zod.string(),
             targetNodeId: zod.string(),
+            sourceHandle: zod.string().nullish(),
             label: zod.string().nullish(),
             condition: zod
               .union([
@@ -215,6 +216,7 @@ export const UpdateWorkflowBody = zod.object({
         id: zod.string(),
         sourceNodeId: zod.string(),
         targetNodeId: zod.string(),
+        sourceHandle: zod.string().nullish(),
         label: zod.string().nullish(),
         condition: zod
           .union([

@@ -35,6 +35,7 @@ export const edgesTable = pgTable("edges", {
   workflowId: text("workflow_id").notNull().references(() => workflowsTable.id, { onDelete: "cascade" }),
   sourceNodeId: text("source_node_id").notNull(),
   targetNodeId: text("target_node_id").notNull(),
+  sourceHandle: text("source_handle"),
   label: text("label"),
   condition: text("condition"),
 });
