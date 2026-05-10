@@ -1171,15 +1171,72 @@ async function runWorkflow({
           await fs.writeFile(pipelineFile, JSON.stringify(pipelineContext), "utf8");
           await fs.writeFile(workflowFile, JSON.stringify(workflowContext), "utf8");
 
+          // ── n8n-style $('Label').json.path → _node_outputs['Label'].path ──
+          // Build a label-keyed map of pipeline snapshots from previously executed nodes.
+          const nodeOutputsByLabel: Record<string, Record<string, unknown>> = {};
+          for (const completedId of Object.keys(nodeResults)) {
+            const nr = nodeResults[completedId];
+            if (!nr || (nr.status !== "success" && nr.status !== "failed")) continue;
+            const snap = nr.outputSnapshot?.pipeline as Record<string, unknown> | undefined;
+            if (snap && typeof snap === "object") {
+              nodeOutputsByLabel[nr.nodeLabel] = snap;
+            }
+          }
+          const nodeOutputsFile = path.join(tmpDir, "node_outputs.json");
+          await fs.writeFile(nodeOutputsFile, JSON.stringify(nodeOutputsByLabel), "utf8");
+
+          // Pre-process user code: $('Label').json → _node_outputs['Label']
+          // Subsequent .foo.bar['k'] just falls through as natural Python on _NodeOut.
+          const preprocessed = userCode.replace(
+            /\$\(\s*(['"])((?:\\.|(?!\1).)*)\1\s*\)\s*\.\s*json/g,
+            (_m, _q, label: string) => `_node_outputs[${JSON.stringify(label)}]`,
+          );
+
           // Wrap user code in a function so `return` works at the top level
-          const _indented = userCode.trim() === ""
+          const _indented = preprocessed.trim() === ""
             ? "    pass"
-            : userCode.split("\n").map((l) => "    " + l).join("\n");
+            : preprocessed.split("\n").map((l) => "    " + l).join("\n");
           const codeOutputType = (nodeConfig.outputType as string | undefined) ?? "auto";
           const wrappedCode = [
             "import json as _json",
             `with open(${JSON.stringify(pipelineFile)}) as _f: pipeline = _json.load(_f)`,
             `with open(${JSON.stringify(workflowFile)}) as _f: workflow = _json.load(_f)`,
+            `with open(${JSON.stringify(nodeOutputsFile)}) as _f: _raw_node_outputs = _json.load(_f)`,
+            "",
+            "class _NodeOut:",
+            "    \"\"\"Wraps node output dicts to allow attribute access ($('x').json.foo).\"\"\"",
+            "    __slots__ = ('_d',)",
+            "    def __init__(self, d): self._d = d",
+            "    def __getattr__(self, name):",
+            "        if isinstance(self._d, dict) and name in self._d:",
+            "            v = self._d[name]; return _NodeOut(v) if isinstance(v, (dict, list)) else v",
+            "        raise AttributeError(f\"node output has no attribute {name!r}\")",
+            "    def __getitem__(self, key):",
+            "        v = self._d[key] if isinstance(self._d, (dict, list)) else None",
+            "        return _NodeOut(v) if isinstance(v, (dict, list)) else v",
+            "    def __iter__(self): return iter(self._d) if hasattr(self._d, '__iter__') else iter([])",
+            "    def __len__(self): return len(self._d) if hasattr(self._d, '__len__') else 0",
+            "    def __contains__(self, k): return (k in self._d) if hasattr(self._d, '__contains__') else False",
+            "    def __repr__(self): return repr(self._d)",
+            "    def __str__(self): return str(self._d)",
+            "    def __bool__(self): return bool(self._d)",
+            "    def __eq__(self, other):",
+            "        if isinstance(other, _NodeOut): return self._d == other._d",
+            "        return self._d == other",
+            "    def get(self, key, default=None):",
+            "        if isinstance(self._d, dict):",
+            "            v = self._d.get(key, default)",
+            "            return _NodeOut(v) if isinstance(v, (dict, list)) else v",
+            "        return default",
+            "    def keys(self): return self._d.keys() if isinstance(self._d, dict) else []",
+            "    def values(self):",
+            "        if not isinstance(self._d, dict): return []",
+            "        return [_NodeOut(v) if isinstance(v, (dict, list)) else v for v in self._d.values()]",
+            "    def items(self):",
+            "        if not isinstance(self._d, dict): return []",
+            "        return [(k, _NodeOut(v) if isinstance(v, (dict, list)) else v) for k, v in self._d.items()]",
+            "    def _unwrap(self): return self._d",
+            "_node_outputs = {k: _NodeOut(v) for k, v in _raw_node_outputs.items()}",
             "",
             "def _node_code(pipeline, workflow):",
             _indented,

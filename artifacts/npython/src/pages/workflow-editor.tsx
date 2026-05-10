@@ -51,6 +51,7 @@ import { autocompletion } from "@codemirror/autocomplete";
 import { CanvasNode } from "@/components/canvas-node";
 import { EdgeWithDelete } from "@/components/edge-with-delete";
 import { NodePalette } from "@/components/node-palette";
+import { NodeDetailModal } from "@/components/node-detail-modal";
 import { NodeDef, NODE_DEFINITIONS, getNodeDef, isTriggerType, isDatabaseNodeType, parseDbNodeType, DB_META, DB_OP_META, VARIABLE_SCOPES } from "@/lib/node-definitions";
 import { pythonLibraryCompletionSource } from "@/lib/python-completions";
 import { copilotExtension } from "@/lib/copilot-extension";
@@ -116,6 +117,9 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   type DepDialog = { def: NodeDef; pkg: string; position?: { x: number; y: number } };
   const [depDialog, setDepDialog] = useState<DepDialog | null>(null);
   const [depInstalling, setDepInstalling] = useState(false);
+
+  // Detail modal (3-column INPUT|PARAMETERS|OUTPUT) opened via double-click
+  const [detailNode, setDetailNode] = useState<ReactFlowNode | null>(null);
 
   // Clear test result + reset tab when selected node changes
   useEffect(() => { setTestResult(null); setConfigPanelTab("config"); }, [selectedNode?.id]);
@@ -198,6 +202,11 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: ReactFlowNode) => {
     setSelectedNode(node);
+  }, []);
+
+  const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: ReactFlowNode) => {
+    setSelectedNode(node);
+    setDetailNode(node);
   }, []);
 
   // ── Drag-and-drop from palette ────────────────────────────────────
@@ -535,6 +544,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeClick={onNodeClick}
+            onNodeDoubleClick={onNodeDoubleClick}
             onPaneClick={() => setSelectedNode(null)}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
@@ -687,6 +697,23 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
           </div>
         </div>
       )}
+
+    {/* Node detail modal (double-click) */}
+    <NodeDetailModal
+      open={!!detailNode}
+      onClose={() => setDetailNode(null)}
+      node={detailNode ? (nodes.find((n) => n.id === detailNode.id) ?? detailNode) : null}
+      workflowId={workflowId}
+      nodes={nodes}
+      edges={edges}
+      lastRunOutputs={lastRunOutputs}
+      onUpdateData={updateNodeData}
+      onUpdateConfig={updateNodeConfig}
+      onTestNode={handleTestNode}
+      testLoading={testLoading}
+      testResult={testResult}
+      onRefreshOutputs={fetchLastRunOutputs}
+    />
     </div>
     </VarColorCtx.Provider>
     </QuickConnectCtx.Provider>
