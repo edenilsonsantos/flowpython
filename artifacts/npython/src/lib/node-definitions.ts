@@ -34,7 +34,7 @@ export function getNodeOutputHandles(
     { id: "false", label: "false", color: "#ef4444" },
   ];
 
-  if (type === "condition" || type === "if_and") return TRUE_FALSE;
+  if (type === "if_and") return TRUE_FALSE;
 
   if (type === "if_else") {
     const elif = (config.elifClauses as Array<{ branch: string }> | undefined) ?? [];
@@ -74,7 +74,7 @@ export function getNodeOutputHandles(
   return [{ id: "out", label: "", color: "#94a3b8" }];
 }
 
-export const BRANCHING_NODE_TYPES = new Set(["condition", "if_and", "if_else", "case", "switch"]);
+export const BRANCHING_NODE_TYPES = new Set(["if_and", "if_else", "case", "switch"]);
 
 export const NODE_CATEGORY_META: Record<NodeCategory, { label: string; color: string; bg: string }> = {
   trigger:    { label: "Trigger",       color: "#14b8a6", bg: "rgba(20,184,166,0.12)"  },
@@ -177,17 +177,6 @@ export const NODE_DEFINITIONS: NodeDef[] = [
     hasOutput: true,
   },
   {
-    type: "condition",
-    label: "Condition",
-    description: "Ramifica por condição Python",
-    category: "logic",
-    iconName: "GitFork",
-    color: "#a78bfa",
-    defaultConfig: { expression: "True" },
-    hasInput: true,
-    hasOutput: true,
-  },
-  {
     type: "if_and",
     label: "If AND / OR",
     description: "Combina múltiplas condições com AND ou OR",
@@ -228,17 +217,6 @@ export const NODE_DEFINITIONS: NodeDef[] = [
       cases: [{ value: "", label: "case1" }] as Array<{ value: string; label: string }>,
       fallback: "default",
     },
-    hasInput: true,
-    hasOutput: true,
-  },
-  {
-    type: "loop",
-    label: "Loop",
-    description: "Itera sobre uma lista",
-    category: "logic",
-    iconName: "RefreshCw",
-    color: "#a78bfa",
-    defaultConfig: { itemsExpression: "[]" },
     hasInput: true,
     hasOutput: true,
   },

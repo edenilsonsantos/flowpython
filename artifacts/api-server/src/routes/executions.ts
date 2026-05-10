@@ -1152,7 +1152,7 @@ async function runWorkflow({
     // For branching nodes (condition / if_and / if_else / case / switch),
     // record which output handle "won" so we only follow matching edges.
     const branchOutcome = new Map<string, string>();
-    const BRANCH_TYPES = new Set(["condition", "if_and", "if_else", "case", "switch"]);
+    const BRANCH_TYPES = new Set(["if_and", "if_else", "case", "switch"]);
     const skippedNodes = new Set<string>();
 
     // Build outgoing-edge map (with sourceHandle) so we can prune downstream.
@@ -1261,7 +1261,7 @@ async function runWorkflow({
           // gating still works. Falls back to "true"/"if"/fallback when missing.
           if (BRANCH_TYPES.has(node.type)) {
             const pd = (pinnedData as Record<string, unknown>) ?? {};
-            if (node.type === "condition" || node.type === "if_and") {
+            if (node.type === "if_and") {
               const r = pd["_condition_result"];
               branchOutcome.set(node.id, (r === true || r === "true") ? "true" : "false");
             } else if (node.type === "if_else") {
@@ -1464,51 +1464,6 @@ async function runWorkflow({
           if (output) await addLog(executionId, node.id, "info", output.trim());
           if (error) await addLog(executionId, node.id, "error", error.trim());
 
-        } else if (node.type === "condition") {
-          // ── Condition: eval Python expression with full pipeline/workflow context ──
-          const config = node.config as Record<string, unknown>;
-          const expression = (config.expression as string) ?? "True";
-          const tmpDir      = await fs.mkdtemp(path.join(os.tmpdir(), "npython-cond-"));
-          const pipelineFile = path.join(tmpDir, "pipeline.json");
-          const workflowFile = path.join(tmpDir, "workflow.json");
-          const scriptPath   = path.join(tmpDir, "cond.py");
-          await fs.writeFile(pipelineFile, JSON.stringify(pipelineContext), "utf8");
-          await fs.writeFile(workflowFile, JSON.stringify(workflowContext), "utf8");
-          const condScript = [
-            "import json, sys",
-            `with open(${JSON.stringify(pipelineFile)}) as f: pipeline = json.load(f)`,
-            `with open(${JSON.stringify(workflowFile)}) as f: workflow = json.load(f)`,
-            "ctx = {**workflow, **pipeline}",
-            "try:",
-            `    result = bool(eval(${JSON.stringify(expression)}, {"__builtins__": __builtins__}, ctx))`,
-            "except Exception as e:",
-            "    print(f'Condition error: {e}', file=sys.stderr)",
-            "    result = False",
-            "print(json.dumps(result))",
-          ].join("\n");
-          await fs.writeFile(scriptPath, condScript, "utf8");
-          const venvPyCond = path.join(venovsDir, workflowId, "bin", "python3");
-          let pyBinCond = "python3";
-          try { await fs.access(venvPyCond); pyBinCond = venvPyCond; } catch {}
-          const condResult = await new Promise<{ result: boolean; err: string | null }>((resolve) => {
-            const proc = spawn(pyBinCond, [scriptPath], { timeout: 10000 });
-            let out = ""; let err = "";
-            proc.stdout.on("data", (d: Buffer) => { out += d.toString(); });
-            proc.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-            proc.on("close", () => {
-              try { resolve({ result: JSON.parse(out.trim()), err: err.trim() || null }); }
-              catch { resolve({ result: false, err: err.trim() || "parse error" }); }
-            });
-            proc.on("error", (e) => resolve({ result: false, err: e.message }));
-          });
-          await fs.rm(tmpDir, { recursive: true, force: true });
-          pipelineContext["_condition_result"] = condResult.result;
-          branchOutcome.set(node.id, condResult.result ? "true" : "false");
-          success = true;
-          output = `Condition "${expression}" → ${condResult.result}`;
-          if (condResult.err) output += ` ⚠ ${condResult.err}`;
-          await addLog(executionId, node.id, "info", output);
-
         } else if (node.type === "if_and") {
           // ── If AND/OR: evaluate multiple conditions combined with AND or OR ──
           const config = node.config as Record<string, unknown>;
@@ -1660,52 +1615,6 @@ async function runWorkflow({
           branchOutcome.set(node.id, caseResult);
           success = true;
           output = `[case] "${inputVar}" = ${valueJson} → "${caseResult}"`;
-          await addLog(executionId, node.id, "info", output);
-
-        } else if (node.type === "loop") {
-          // ── Loop: evaluate itemsExpression and store items in pipeline ──
-          const config = node.config as Record<string, unknown>;
-          const itemsExpression = (config.itemsExpression as string) ?? "[]";
-          const outputVar = (config.outputVar as string) ?? "loop_items";
-          const tmpDir      = await fs.mkdtemp(path.join(os.tmpdir(), "npython-loop-"));
-          const pipelineFile = path.join(tmpDir, "pipeline.json");
-          const workflowFile = path.join(tmpDir, "workflow.json");
-          const scriptPath   = path.join(tmpDir, "loop.py");
-          await fs.writeFile(pipelineFile, JSON.stringify(pipelineContext), "utf8");
-          await fs.writeFile(workflowFile, JSON.stringify(workflowContext), "utf8");
-          const loopScript = [
-            "import json, sys",
-            `with open(${JSON.stringify(pipelineFile)}) as f: pipeline = json.load(f)`,
-            `with open(${JSON.stringify(workflowFile)}) as f: workflow = json.load(f)`,
-            "ctx = {**workflow, **pipeline}",
-            "try:",
-            `    items = eval(${JSON.stringify(itemsExpression)}, {"__builtins__": __builtins__}, ctx)`,
-            "    if not isinstance(items, list): items = list(items)",
-            "except Exception as e:",
-            "    print(f'Loop error: {e}', file=sys.stderr)",
-            "    items = []",
-            "print(json.dumps(items))",
-          ].join("\n");
-          await fs.writeFile(scriptPath, loopScript, "utf8");
-          const venvPyLoop = path.join(venovsDir, workflowId, "bin", "python3");
-          let pyBinLoop = "python3";
-          try { await fs.access(venvPyLoop); pyBinLoop = venvPyLoop; } catch {}
-          const loopResult = await new Promise<{ items: unknown[]; err: string | null }>((resolve) => {
-            const proc = spawn(pyBinLoop, [scriptPath], { timeout: 15000 });
-            let out = ""; let err = "";
-            proc.stdout.on("data", (d: Buffer) => { out += d.toString(); });
-            proc.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-            proc.on("close", () => {
-              try { resolve({ items: JSON.parse(out.trim()), err: err.trim() || null }); }
-              catch { resolve({ items: [], err: err.trim() || "parse error" }); }
-            });
-            proc.on("error", (e) => resolve({ items: [], err: e.message }));
-          });
-          await fs.rm(tmpDir, { recursive: true, force: true });
-          pipelineContext[outputVar] = loopResult.items;
-          success = true;
-          output = `Loop "${itemsExpression}" → ${loopResult.items.length} itens → "${outputVar}"`;
-          if (loopResult.err) output += ` ⚠ ${loopResult.err}`;
           await addLog(executionId, node.id, "info", output);
 
         } else if (node.type === "variable") {

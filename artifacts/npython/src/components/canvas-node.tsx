@@ -1,4 +1,4 @@
-import { memo, useState, useContext, useRef } from "react";
+import React, { memo, useState, useContext, useRef } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
 import {
   Play, Webhook, Clock, GitBranch, Code2, GitFork, RefreshCw,
@@ -190,36 +190,49 @@ export const CanvasNode = memo(({ id, data, isConnectable, selected }: NodeProps
           return (
             <>
               {handles.map((h, i) => {
-                // Distribute handles evenly down the right side of the body
+                // Distribute handles evenly down the right side of the body.
+                // IMPORTANT: Handle must be rendered directly (not wrapped in
+                // a positioned div) so React Flow can compute correct anchor
+                // positions for each individual handle.
                 const topPct = isMulti
                   ? `${((i + 1) / (handles.length + 1)) * 100}%`
                   : "50%";
                 return (
-                  <div key={h.id} style={{ position: "absolute", top: topPct, right: 0, transform: "translateY(-50%)" }}>
+                  <React.Fragment key={h.id}>
                     <Handle
                       id={h.id}
                       type="source"
                       position={Position.Right}
                       isConnectable={isConnectable}
                       style={{
-                        background: h.color, border: "2px solid hsl(var(--background))",
-                        width: HANDLE_SIZE, height: HANDLE_SIZE,
+                        background: h.color,
+                        border: "2px solid hsl(var(--background))",
+                        width: HANDLE_SIZE,
+                        height: HANDLE_SIZE,
                         right: -HANDLE_SIZE / 2 - 1,
-                        position: "absolute", top: "50%", transform: "translateY(-50%)",
+                        top: topPct,
                       }}
                     />
                     {isMulti && (
-                      <span style={{
-                        position: "absolute",
-                        left: HANDLE_SIZE / 2 + 6, top: "50%", transform: "translateY(-50%)",
-                        fontSize: 9, fontWeight: 600, color: h.color,
-                        whiteSpace: "nowrap", pointerEvents: "none",
-                        textShadow: "0 1px 2px rgba(0,0,0,0.6)",
-                      }}>
+                      <span
+                        className="nodrag nopan"
+                        style={{
+                          position: "absolute",
+                          right: -6 - HANDLE_SIZE,
+                          top: topPct,
+                          transform: "translate(100%, -50%)",
+                          fontSize: 9,
+                          fontWeight: 600,
+                          color: h.color,
+                          whiteSpace: "nowrap",
+                          pointerEvents: "none",
+                          textShadow: "0 1px 2px rgba(0,0,0,0.6)",
+                        }}
+                      >
                         {h.label}
                       </span>
                     )}
-                  </div>
+                  </React.Fragment>
                 );
               })}
 

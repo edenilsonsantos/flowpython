@@ -2790,18 +2790,6 @@ export function NodeConfigPanel({
         </>
       )}
 
-      {type === "condition" && (
-        <Field label="Expressão Python (True/False)">
-          <VarTokenInput value={(cfg.expression as string) ?? ""} onChange={(v) => onUpdateConfig("expression", v)} placeholder="len(result) > 0" />
-        </Field>
-      )}
-
-      {type === "loop" && (
-        <Field label="Lista de itens (Python)">
-          <VarTokenInput value={(cfg.itemsExpression as string) ?? ""} onChange={(v) => onUpdateConfig("itemsExpression", v)} placeholder="[1, 2, 3]" />
-        </Field>
-      )}
-
       {type === "call_subflow" && (
         <CallSubflowConfig cfg={cfg} onUpdateConfig={onUpdateConfig} currentWorkflowId={workflowId} />
       )}
