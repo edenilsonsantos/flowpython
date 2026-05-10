@@ -948,6 +948,223 @@ function PipInstallConfig({
   );
 }
 
+// ─── If AND / OR Node Config ──────────────────────────────────────────────────
+
+function IfAndNodeConfig({
+  cfg,
+  onUpdateConfig,
+}: {
+  cfg: Record<string, unknown>;
+  onUpdateConfig: (k: string, v: unknown) => void;
+}) {
+  const conditions = (cfg.conditions as Array<{ expression: string }>) ?? [];
+  const mode = (cfg.mode as string) ?? "and";
+
+  const add = () => onUpdateConfig("conditions", [...conditions, { expression: "True" }]);
+  const update = (idx: number, val: string) =>
+    onUpdateConfig("conditions", conditions.map((c, i) => (i === idx ? { expression: val } : c)));
+  const remove = (idx: number) =>
+    onUpdateConfig("conditions", conditions.filter((_, i) => i !== idx));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Field label="Operador lógico">
+        <Select value={mode} onValueChange={(v) => onUpdateConfig("mode", v)}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="and">AND — todas devem ser verdadeiras</SelectItem>
+            <SelectItem value="or">OR — basta uma ser verdadeira</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <label style={{ fontSize: 12, fontWeight: 500 }}>Condições ({conditions.length})</label>
+          <Button size="sm" variant="outline" onClick={add} style={{ height: 26, fontSize: 11, padding: "0 10px" }}>
+            <Plus size={11} className="mr-1" /> Adicionar
+          </Button>
+        </div>
+        {conditions.length === 0 && (
+          <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", textAlign: "center", padding: "10px 0" }}>Nenhuma condição adicionada</div>
+        )}
+        {conditions.map((cond, idx) => (
+          <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+            <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", minWidth: 32, textAlign: "right", flexShrink: 0 }}>
+              {idx === 0 ? "SE" : mode.toUpperCase()}
+            </div>
+            <VarTokenInput
+              value={cond.expression}
+              onChange={(v) => update(idx, v)}
+              placeholder="len(lista) > 0"
+              style={{ flex: 1 }}
+            />
+            <Button size="icon" variant="ghost" onClick={() => remove(idx)} style={{ height: 28, width: 28, flexShrink: 0 }}>
+              <Trash2 size={12} />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <InfoBox>O resultado fica em <code>_condition_result</code> (True/False) no pipeline para uso em nodos downstream.</InfoBox>
+    </div>
+  );
+}
+
+// ─── If / Else If Node Config ─────────────────────────────────────────────────
+
+function IfElseNodeConfig({
+  cfg,
+  onUpdateConfig,
+}: {
+  cfg: Record<string, unknown>;
+  onUpdateConfig: (k: string, v: unknown) => void;
+}) {
+  const elifClauses = (cfg.elifClauses as Array<{ expression: string; branch: string }>) ?? [];
+
+  const addElif = () =>
+    onUpdateConfig("elifClauses", [
+      ...elifClauses,
+      { expression: "True", branch: `elif_${elifClauses.length + 1}` },
+    ]);
+  const updateElif = (idx: number, field: "expression" | "branch", val: string) =>
+    onUpdateConfig("elifClauses", elifClauses.map((c, i) => (i === idx ? { ...c, [field]: val } : c)));
+  const removeElif = (idx: number) =>
+    onUpdateConfig("elifClauses", elifClauses.filter((_, i) => i !== idx));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Field label="Condição IF (expressão Python → True/False)">
+        <VarTokenInput
+          value={(cfg.ifExpression as string) ?? ""}
+          onChange={(v) => onUpdateConfig("ifExpression", v)}
+          placeholder="x > 0"
+        />
+      </Field>
+
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <label style={{ fontSize: 12, fontWeight: 500 }}>Cláusulas ELIF ({elifClauses.length})</label>
+          <Button size="sm" variant="outline" onClick={addElif} style={{ height: 26, fontSize: 11, padding: "0 10px" }}>
+            <Plus size={11} className="mr-1" /> Adicionar
+          </Button>
+        </div>
+        {elifClauses.length === 0 && (
+          <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", textAlign: "center", padding: "8px 0" }}>Nenhuma cláusula elif</div>
+        )}
+        {elifClauses.map((clause, idx) => (
+          <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+            <div style={{ fontSize: 10, color: "#a78bfa", minWidth: 30, flexShrink: 0 }}>elif</div>
+            <VarTokenInput
+              value={clause.expression}
+              onChange={(v) => updateElif(idx, "expression", v)}
+              placeholder="x == 0"
+              style={{ flex: 2 }}
+            />
+            <Input
+              value={clause.branch}
+              onChange={(e) => updateElif(idx, "branch", e.target.value)}
+              placeholder="branch"
+              style={{ fontFamily: "monospace", fontSize: 11, flex: 1 }}
+            />
+            <Button size="icon" variant="ghost" onClick={() => removeElif(idx)} style={{ height: 28, width: 28, flexShrink: 0 }}>
+              <Trash2 size={12} />
+            </Button>
+          </div>
+        ))}
+        {elifClauses.length > 0 && (
+          <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 4 }}>
+            Colunas: <strong>expressão Python</strong> → <strong>nome da branch</strong>
+          </div>
+        )}
+      </div>
+
+      <Field label="Branch ELSE (fallback se nenhuma condição for verdadeira)">
+        <Input
+          value={(cfg.elseBranch as string) ?? "else"}
+          onChange={(e) => onUpdateConfig("elseBranch", e.target.value)}
+          placeholder="else"
+          style={{ fontFamily: "monospace" }}
+        />
+      </Field>
+      <InfoBox>O resultado fica em <code>_branch</code> no pipeline: <code>"if"</code>, <code>"elif_N"</code> ou o nome do else.</InfoBox>
+    </div>
+  );
+}
+
+// ─── Case / Match Node Config ─────────────────────────────────────────────────
+
+function CaseNodeConfig({
+  cfg,
+  onUpdateConfig,
+}: {
+  cfg: Record<string, unknown>;
+  onUpdateConfig: (k: string, v: unknown) => void;
+}) {
+  const cases = (cfg.cases as Array<{ value: string; label: string }>) ?? [];
+  const update = (idx: number, field: "value" | "label", val: string) =>
+    onUpdateConfig("cases", cases.map((c, i) => (i === idx ? { ...c, [field]: val } : c)));
+  const add = () =>
+    onUpdateConfig("cases", [...cases, { value: "", label: `case${cases.length + 1}` }]);
+  const remove = (idx: number) =>
+    onUpdateConfig("cases", cases.filter((_, i) => i !== idx));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Field label="Variável de entrada (pipeline)">
+        <VarTokenInput
+          value={(cfg.inputVar as string) ?? ""}
+          onChange={(v) => onUpdateConfig("inputVar", v)}
+          placeholder='status ou pipeline["status"]'
+        />
+      </Field>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <label style={{ fontSize: 12, fontWeight: 500 }}>Casos ({cases.length})</label>
+          <Button size="sm" variant="outline" onClick={add} style={{ height: 26, fontSize: 11, padding: "0 10px" }}>
+            <Plus size={11} className="mr-1" /> Adicionar
+          </Button>
+        </div>
+        {cases.length === 0 && (
+          <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", textAlign: "center", padding: "10px 0" }}>Nenhum caso adicionado</div>
+        )}
+        {cases.map((c, idx) => (
+          <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+            <Input
+              value={c.value}
+              onChange={(e) => update(idx, "value", e.target.value)}
+              placeholder="200"
+              style={{ fontFamily: "monospace", fontSize: 11, flex: 1 }}
+            />
+            <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", flexShrink: 0 }}>→</div>
+            <Input
+              value={c.label}
+              onChange={(e) => update(idx, "label", e.target.value)}
+              placeholder="label"
+              style={{ fontFamily: "monospace", fontSize: 11, flex: 1 }}
+            />
+            <Button size="icon" variant="ghost" onClick={() => remove(idx)} style={{ height: 28, width: 28, flexShrink: 0 }}>
+              <Trash2 size={12} />
+            </Button>
+          </div>
+        ))}
+        {cases.length > 0 && (
+          <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", marginTop: 4 }}>
+            Colunas: <strong>valor</strong> (igualdade direta) → <strong>label da branch</strong>
+          </div>
+        )}
+      </div>
+      <Field label="Branch fallback (sem match)">
+        <Input
+          value={(cfg.fallback as string) ?? "default"}
+          onChange={(e) => onUpdateConfig("fallback", e.target.value)}
+          placeholder="default"
+          style={{ fontFamily: "monospace" }}
+        />
+      </Field>
+      <InfoBox>O resultado fica em <code>_switch_result</code> no pipeline. Use igualdade exata (string, número, bool).</InfoBox>
+    </div>
+  );
+}
+
 // ─── Switch Node Config ───────────────────────────────────────────────────────
 
 function SwitchNodeConfig({
@@ -2621,6 +2838,18 @@ export function NodeConfigPanel({
 
       {type === "pip_install" && (
         <PipInstallConfig cfg={cfg} onUpdateConfig={onUpdateConfig} />
+      )}
+
+      {type === "if_and" && (
+        <IfAndNodeConfig cfg={cfg} onUpdateConfig={onUpdateConfig} />
+      )}
+
+      {type === "if_else" && (
+        <IfElseNodeConfig cfg={cfg} onUpdateConfig={onUpdateConfig} />
+      )}
+
+      {type === "case" && (
+        <CaseNodeConfig cfg={cfg} onUpdateConfig={onUpdateConfig} />
       )}
 
       {type === "switch" && (

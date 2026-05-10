@@ -4,7 +4,8 @@ import {
   Variable, Database, Shuffle, Globe, Timer, StickyNote,
   ChevronDown, ChevronRight, Braces, Syringe, Package,
   ToggleRight, GitMerge, ListFilter, Layers, Sigma, Scissors,
-  ArrowUpDown, FilterX, Hash, Search, Plus, PenLine, Trash2, LucideProps,
+  ArrowUpDown, FilterX, Hash, Search, Plus, PenLine, Trash2,
+  CheckCircle2, LayoutList, LucideProps,
 } from "lucide-react";
 import { NODE_DEFINITIONS, NODE_CATEGORY_META, NodeCategory, NodeDef } from "@/lib/node-definitions";
 
@@ -13,6 +14,7 @@ const ICON_MAP: Record<string, React.FC<LucideProps>> = {
   Variable, Database, Shuffle, Globe, Timer, StickyNote, Braces, Syringe, Package,
   ToggleRight, GitMerge, ListFilter, Layers, Sigma, Scissors,
   ArrowUpDown, FilterX, Hash, Search, Plus, PenLine, Trash2,
+  CheckCircle2, LayoutList,
 };
 
 const CATEGORY_ORDER: NodeCategory[] = ["trigger", "logic", "transform", "variables", "data", "integration", "database", "utility"];

@@ -1337,6 +1337,156 @@ async function runWorkflow({
           if (condResult.err) output += ` ⚠ ${condResult.err}`;
           await addLog(executionId, node.id, "info", output);
 
+        } else if (node.type === "if_and") {
+          // ── If AND/OR: evaluate multiple conditions combined with AND or OR ──
+          const config = node.config as Record<string, unknown>;
+          const mode = (config.mode as string) ?? "and";
+          const conditions = (config.conditions as Array<{ expression: string }>) ?? [];
+          const tmpDir       = await fs.mkdtemp(path.join(os.tmpdir(), "npython-ifand-"));
+          const pipelineFile = path.join(tmpDir, "pipeline.json");
+          const workflowFile = path.join(tmpDir, "workflow.json");
+          const scriptPath   = path.join(tmpDir, "ifand.py");
+          await fs.writeFile(pipelineFile, JSON.stringify(pipelineContext), "utf8");
+          await fs.writeFile(workflowFile, JSON.stringify(workflowContext), "utf8");
+          const exprsJson = JSON.stringify(conditions.map((c) => c.expression));
+          const ifAndScript = [
+            "import json, sys",
+            `with open(${JSON.stringify(pipelineFile)}) as f: pipeline = json.load(f)`,
+            `with open(${JSON.stringify(workflowFile)}) as f: workflow = json.load(f)`,
+            "ctx = {**workflow, **pipeline}",
+            `expressions = json.loads(${JSON.stringify(exprsJson)})`,
+            `mode = ${JSON.stringify(mode)}`,
+            "results = []",
+            "errors = []",
+            "for expr in expressions:",
+            "    try:",
+            "        results.append(bool(eval(expr, {'__builtins__': __builtins__}, ctx)))",
+            "    except Exception as e:",
+            "        errors.append(str(e))",
+            "        results.append(False)",
+            "final = any(results) if mode == 'or' else all(results)",
+            "print(json.dumps({'result': final, 'results': results, 'errors': errors}))",
+          ].join("\n");
+          await fs.writeFile(scriptPath, ifAndScript, "utf8");
+          const venvPyIfAnd = path.join(venovsDir, workflowId, "bin", "python3");
+          let pyBinIfAnd = "python3";
+          try { await fs.access(venvPyIfAnd); pyBinIfAnd = venvPyIfAnd; } catch {}
+          const ifAndResult = await new Promise<{ result: boolean; results: boolean[]; errors: string[] }>((resolve) => {
+            const proc = spawn(pyBinIfAnd, [scriptPath], { timeout: 10000 });
+            let out = ""; let err = "";
+            proc.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+            proc.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+            proc.on("close", () => {
+              try { resolve(JSON.parse(out.trim())); }
+              catch { resolve({ result: false, results: [], errors: [err.trim() || "parse error"] }); }
+            });
+            proc.on("error", (e) => resolve({ result: false, results: [], errors: [e.message] }));
+          });
+          await fs.rm(tmpDir, { recursive: true, force: true });
+          pipelineContext["_condition_result"] = ifAndResult.result;
+          success = true;
+          const modeLabel = mode === "or" ? "OR" : "AND";
+          output = `[if_${modeLabel}] ${conditions.length} condições → ${ifAndResult.result} (${ifAndResult.results.map(String).join(`, ${modeLabel} `)})`;
+          if (ifAndResult.errors.length > 0) output += ` ⚠ ${ifAndResult.errors.join("; ")}`;
+          await addLog(executionId, node.id, "info", output);
+
+        } else if (node.type === "if_else") {
+          // ── If / Else If: evaluate if/elif/else chain, store branch name ──
+          const config = node.config as Record<string, unknown>;
+          const ifExpression = (config.ifExpression as string) ?? "True";
+          const elifClauses  = (config.elifClauses as Array<{ expression: string; branch: string }>) ?? [];
+          const elseBranch   = (config.elseBranch as string) ?? "else";
+          const tmpDir       = await fs.mkdtemp(path.join(os.tmpdir(), "npython-ifelse-"));
+          const pipelineFile = path.join(tmpDir, "pipeline.json");
+          const workflowFile = path.join(tmpDir, "workflow.json");
+          const scriptPath   = path.join(tmpDir, "ifelse.py");
+          await fs.writeFile(pipelineFile, JSON.stringify(pipelineContext), "utf8");
+          await fs.writeFile(workflowFile, JSON.stringify(workflowContext), "utf8");
+          const elifJson = JSON.stringify(elifClauses);
+          const ifElseScript = [
+            "import json, sys",
+            `with open(${JSON.stringify(pipelineFile)}) as f: pipeline = json.load(f)`,
+            `with open(${JSON.stringify(workflowFile)}) as f: workflow = json.load(f)`,
+            "ctx = {**workflow, **pipeline}",
+            `elif_clauses = json.loads(${JSON.stringify(elifJson)})`,
+            `else_branch = ${JSON.stringify(elseBranch)}`,
+            "matched = else_branch",
+            "try:",
+            `    if bool(eval(${JSON.stringify(ifExpression)}, {'__builtins__': __builtins__}, ctx)):`,
+            "        matched = 'if'",
+            "    else:",
+            "        for clause in elif_clauses:",
+            "            try:",
+            "                if bool(eval(clause['expression'], {'__builtins__': __builtins__}, ctx)):",
+            "                    matched = clause['branch']",
+            "                    break",
+            "            except: pass",
+            "except Exception as e:",
+            "    print(f'if_else error: {e}', file=__import__('sys').stderr)",
+            "print(json.dumps(matched))",
+          ].join("\n");
+          await fs.writeFile(scriptPath, ifElseScript, "utf8");
+          const venvPyIfElse = path.join(venovsDir, workflowId, "bin", "python3");
+          let pyBinIfElse = "python3";
+          try { await fs.access(venvPyIfElse); pyBinIfElse = venvPyIfElse; } catch {}
+          const ifElseResult = await new Promise<{ branch: string; err: string | null }>((resolve) => {
+            const proc = spawn(pyBinIfElse, [scriptPath], { timeout: 10000 });
+            let out = ""; let err = "";
+            proc.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+            proc.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+            proc.on("close", () => {
+              try { resolve({ branch: JSON.parse(out.trim()), err: err.trim() || null }); }
+              catch { resolve({ branch: elseBranch, err: err.trim() || "parse error" }); }
+            });
+            proc.on("error", (e) => resolve({ branch: elseBranch, err: e.message }));
+          });
+          await fs.rm(tmpDir, { recursive: true, force: true });
+          pipelineContext["_branch"] = ifElseResult.branch;
+          success = true;
+          output = `[if_else] → branch "${ifElseResult.branch}"`;
+          if (ifElseResult.err) output += ` ⚠ ${ifElseResult.err}`;
+          await addLog(executionId, node.id, "info", output);
+
+        } else if (node.type === "case") {
+          // ── Case/Match: equality-based routing (like switch but literal values) ──
+          const config = node.config as Record<string, unknown>;
+          const inputVar = (config.inputVar as string) ?? "";
+          const cases    = (config.cases as Array<{ value: string; label: string }>) ?? [];
+          const fallback = (config.fallback as string) ?? "default";
+          const rawValue = inputVar ? (pipelineContext[inputVar] ?? workflowContext[inputVar] ?? null) : null;
+          const valueJson = JSON.stringify(rawValue);
+          const casesJson = JSON.stringify(cases);
+          const caseScript = [
+            "import json, sys",
+            `raw = json.loads(${JSON.stringify(valueJson)})`,
+            `cases = json.loads(${JSON.stringify(casesJson)})`,
+            `fallback = ${JSON.stringify(fallback)}`,
+            "matched = fallback",
+            "for c in cases:",
+            "    cv = c['value']",
+            "    try:",
+            "        parsed = json.loads(cv)",
+            "        if raw == parsed or str(raw) == str(cv):",
+            "            matched = c['label']; break",
+            "    except:",
+            "        if str(raw) == str(cv):",
+            "            matched = c['label']; break",
+            "print(json.dumps(matched))",
+          ].join("\n");
+          const tmpScript = path.join(os.tmpdir(), `case_${executionId}.py`);
+          await fs.writeFile(tmpScript, caseScript, "utf8");
+          const caseResult = await new Promise<string>((resolve) => {
+            const proc = spawn("python3", [tmpScript], { timeout: 10000 });
+            let out = ""; proc.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+            proc.on("close", () => { try { resolve(JSON.parse(out.trim())); } catch { resolve(fallback); } });
+            proc.on("error", () => resolve(fallback));
+          });
+          await fs.unlink(tmpScript).catch(() => {});
+          pipelineContext["_switch_result"] = caseResult;
+          success = true;
+          output = `[case] "${inputVar}" = ${valueJson} → "${caseResult}"`;
+          await addLog(executionId, node.id, "info", output);
+
         } else if (node.type === "loop") {
           // ── Loop: evaluate itemsExpression and store items in pipeline ──
           const config = node.config as Record<string, unknown>;
